@@ -3,7 +3,7 @@
 | Carpeta | Contenido |
 | --- | --- |
 | `DDL/` | `000_base_de_datos.sql` crea la BD. Luego una tabla por archivo, en orden de dependencias, con sus índices, comentarios y triggers |
-| `Vistas/` | Una vista por archivo |
+| `Vistas/` | Una vista por archivo, con prefijo numérico porque algunas usan otras vistas |
 | `Funciones/` | Una función por archivo |
 | `Procedimientos/` | Un procedimiento por archivo (plantilla: `_plantilla.sql.txt`) |
 | `DML/` | Datos de prueba, una tabla por archivo, en orden de dependencias |

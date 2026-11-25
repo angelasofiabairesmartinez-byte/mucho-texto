@@ -30,7 +30,8 @@ Todos pueden subir su propia rama. A `develop` y `main` solo entra código con *
 ## Base de datos (Bloques 1 y 3)
 
 - Un objeto por archivo, con el nombre del objeto: `Procedimientos/sp_registrar_prestamo.sql`. Plantilla: `Procedimientos/_plantilla.sql.txt`.
-- Orden de ejecución: DDL → Vistas → Funciones → Procedimientos → DML. Las vistas no usan funciones.
+- Orden de ejecución: DDL → Vistas → Funciones → Procedimientos → DML, y dentro de cada carpeta en orden alfabético. Las vistas no usan funciones.
+- Las vistas llevan prefijo numérico (`07_vw_...`) porque unas usan otras: una vista nueva va con el número siguiente. Si una función usa otra función, la que se usa debe quedar antes en orden alfabético.
 - Cada SP o función lleva su prueba en `pruebas/<nombre>.test.sql` (plantilla: `pruebas/_plantilla.test.sql.txt`) con un caso que funciona y uno que debe fallar.
 - Antes de programar un SP, su contrato va en `documentacion/contratos-sp.md`.
 - Validaciones con `THROW 50001–50099` y mensaje en español: la API se lo muestra tal cual al usuario.

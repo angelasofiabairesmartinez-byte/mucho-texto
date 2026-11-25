@@ -1327,192 +1327,7 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Leída;
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que el cliente abrió la notificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'fecha_lectura';
 GO
 
--- >>> Vistas/vw_biblioteca_digital_cliente.sql
-CREATE OR ALTER VIEW dbo.vw_biblioteca_digital_cliente
-AS
-SELECT
-    pl.cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    l.id                                    AS libro_id,
-    l.titulo,
-    CASE rd.tipo WHEN 'T' THEN N'TEXTO' ELSE N'AUDIO' END AS tipo_recurso,
-    pl.posicion_actual,
-    CASE rd.tipo WHEN 'T' THEN rd.total_paginas ELSE rd.duracion_segundos END AS posicion_final,
-    pl.porcentaje,
-    CASE WHEN pl.porcentaje >= 100 THEN N'TERMINADO'
-         WHEN rd.tipo = 'T' THEN N'LEYENDO'
-         ELSE N'ESCUCHANDO' END             AS situacion,
-    pl.fecha_inicio,
-    pl.fecha_ultima_lectura,
-    ISNULL(nt.total_notas, 0)               AS total_notas
-FROM dbo.progresolectura pl
-INNER JOIN dbo.recursodigital rd ON rd.id = pl.recurso_digital_id
-INNER JOIN dbo.libro l           ON l.id = rd.libro_id
-INNER JOIN dbo.cliente cl        ON cl.id = pl.cliente_id
-INNER JOIN dbo.persona pe        ON pe.id = cl.persona_id
-LEFT JOIN (
-    SELECT nl.cliente_id, nl.recurso_digital_id, COUNT(*) AS total_notas
-    FROM dbo.notalectura nl
-    GROUP BY nl.cliente_id, nl.recurso_digital_id
-) nt ON nt.cliente_id = pl.cliente_id AND nt.recurso_digital_id = pl.recurso_digital_id
-WHERE rd.estado = 1;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Avance de lectura y audio de cada cliente en la biblioteca digital.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_biblioteca_digital_cliente';
-GO
-
--- >>> Vistas/vw_catalogo_digital.sql
-CREATE OR ALTER VIEW dbo.vw_catalogo_digital
-AS
-SELECT
-    l.id                                    AS libro_id,
-    l.titulo,
-    CASE WHEN rt.id IS NULL THEN N'NO' ELSE N'SI' END AS tiene_texto,
-    rt.total_paginas,
-    CASE WHEN ra.id IS NULL THEN N'NO' ELSE N'SI' END AS tiene_audio,
-    CASE WHEN ra.id IS NULL THEN NULL
-         WHEN ra.generado_ia = 1 THEN N'SI' ELSE N'NO' END AS audio_generado_ia,
-    ra.voz_narracion,
-    CONVERT(VARCHAR(8), DATEADD(SECOND, ra.duracion_segundos, CAST('00:00:00' AS TIME(0))), 108) AS duracion_audio,
-    ISNULL(lc.lectores, 0)                  AS lectores,
-    lc.avance_promedio
-FROM dbo.libro l
-LEFT JOIN dbo.recursodigital rt ON rt.libro_id = l.id AND rt.tipo = 'T' AND rt.estado = 1
-LEFT JOIN dbo.recursodigital ra ON ra.libro_id = l.id AND ra.tipo = 'A' AND ra.estado = 1
-LEFT JOIN (
-    SELECT rd.libro_id,
-           COUNT(DISTINCT pl.cliente_id)               AS lectores,
-           CAST(AVG(pl.porcentaje) AS DECIMAL(5,2))    AS avance_promedio
-    FROM dbo.progresolectura pl
-    INNER JOIN dbo.recursodigital rd ON rd.id = pl.recurso_digital_id
-    GROUP BY rd.libro_id
-) lc ON lc.libro_id = l.id
-WHERE l.permite_digital = 1;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Libros con derechos digitales: texto, audio, IA, duración y lectores.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_catalogo_digital';
-GO
-
--- >>> Vistas/vw_cliente_limite_prestamos.sql
-CREATE OR ALTER VIEW dbo.vw_cliente_limite_prestamos
-AS
-SELECT
-    cl.id                                   AS cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    tc.nombre                               AS tipo_cliente,
-    tc.limite_prestamos,
-    tc.limite_renovaciones,
-    ISNULL(pu.en_uso, 0)                    AS prestamos_en_uso,
-    CASE WHEN tc.limite_prestamos - ISNULL(pu.en_uso, 0) > 0
-         THEN tc.limite_prestamos - ISNULL(pu.en_uso, 0)
-         ELSE 0 END                         AS cupos_disponibles,
-    CASE WHEN cr.cliente_id IS NULL THEN N'NO' ELSE N'SI' END AS credencial_activa,
-    ISNULL(mp.saldo_pendiente, 0)           AS saldo_multas_pendientes,
-    CASE WHEN cr.cliente_id IS NULL THEN N'NO - CREDENCIAL INACTIVA O VENCIDA'
-         WHEN ISNULL(mp.saldo_pendiente, 0) > 0 THEN N'NO - MULTAS PENDIENTES'
-         WHEN ISNULL(pu.en_uso, 0) >= tc.limite_prestamos THEN N'NO - LÍMITE ALCANZADO'
-         ELSE N'SI' END                     AS puede_prestar
-FROM dbo.cliente cl
-INNER JOIN dbo.persona pe      ON pe.id = cl.persona_id
-INNER JOIN dbo.tipocliente tc  ON tc.id = cl.tipo_cliente_id
-LEFT JOIN (
-    SELECT p.cliente_id, COUNT(dp.id) AS en_uso
-    FROM dbo.prestamo p
-    INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
-    WHERE NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd WHERE dd.detalle_prestamo_id = dp.id)
-    GROUP BY p.cliente_id
-) pu ON pu.cliente_id = cl.id
-LEFT JOIN (
-    SELECT DISTINCT c.cliente_id
-    FROM dbo.credencial c
-    WHERE c.estado = 'ACTIVA'
-      AND (c.fecha_vencimiento IS NULL OR c.fecha_vencimiento >= CAST(GETDATE() AS DATE))
-) cr ON cr.cliente_id = cl.id
-LEFT JOIN dbo.vw_multas_pendientes_cliente mp ON mp.cliente_id = cl.id;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Préstamos en uso contra el límite de cada cliente e indicador de si puede prestar.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_cliente_limite_prestamos';
-GO
-
--- >>> Vistas/vw_clientes_credenciales_inactivas.sql
-CREATE OR ALTER VIEW dbo.vw_clientes_credenciales_inactivas
-AS
-SELECT
-    cl.id                                   AS cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    pe.correo,
-    tc.nombre                               AS tipo_cliente,
-    c.id                                    AS credencial_id,
-    c.fecha_registro,
-    c.fecha_vencimiento,
-    c.estado                                AS estado_credencial,
-    CASE WHEN c.estado = 'ACTIVA' THEN N'VENCIDA POR FECHA' ELSE c.estado END AS situacion,
-    CASE WHEN c.fecha_vencimiento < CAST(GETDATE() AS DATE)
-         THEN DATEDIFF(DAY, c.fecha_vencimiento, CAST(GETDATE() AS DATE))
-         ELSE 0 END                         AS dias_vencida,
-    CASE WHEN EXISTS (SELECT 1
-                      FROM dbo.credencial c2
-                      WHERE c2.cliente_id = c.cliente_id
-                        AND c2.estado = 'ACTIVA'
-                        AND (c2.fecha_vencimiento IS NULL OR c2.fecha_vencimiento >= CAST(GETDATE() AS DATE)))
-         THEN N'SI' ELSE N'NO' END          AS tiene_otra_credencial_activa
-FROM dbo.credencial c
-INNER JOIN dbo.cliente cl      ON cl.id = c.cliente_id
-INNER JOIN dbo.persona pe      ON pe.id = cl.persona_id
-INNER JOIN dbo.tipocliente tc  ON tc.id = cl.tipo_cliente_id
-WHERE c.estado <> 'ACTIVA'
-   OR c.fecha_vencimiento < CAST(GETDATE() AS DATE);
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Credenciales de clientes inactivas, suspendidas o vencidas.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_clientes_credenciales_inactivas';
-GO
-
--- >>> Vistas/vw_clientes_prestamos_retrasados.sql
-CREATE OR ALTER VIEW dbo.vw_clientes_prestamos_retrasados
-AS
-SELECT
-    cl.id                                   AS cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    pe.correo,
-    ca.credencial_id,
-    ca.vencimiento_credencial,
-    p.id                                    AS prestamo_id,
-    p.fecha_prestamo,
-    p.fecha_vencimiento                     AS fecha_limite_devolucion,
-    DATEDIFF(DAY, p.fecha_vencimiento, CAST(GETDATE() AS DATE)) AS dias_retraso,
-    l.id                                    AS libro_id,
-    l.titulo,
-    ej.codigo_barras,
-    ep.nombre                               AS estado_prestamo
-FROM dbo.prestamo p
-INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
-INNER JOIN dbo.ejemplar ej        ON ej.id = dp.ejemplar_id
-INNER JOIN dbo.libro l            ON l.id = ej.libro_id
-INNER JOIN dbo.estadoprestamo ep  ON ep.id = p.estado_prestamo_id
-INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
-INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
-INNER JOIN (
-    SELECT c.cliente_id,
-           MAX(c.id)                AS credencial_id,
-           MAX(c.fecha_vencimiento) AS vencimiento_credencial
-    FROM dbo.credencial c
-    WHERE c.estado = 'ACTIVA'
-      AND (c.fecha_vencimiento IS NULL OR c.fecha_vencimiento >= CAST(GETDATE() AS DATE))
-    GROUP BY c.cliente_id
-) ca ON ca.cliente_id = cl.id
-WHERE NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd WHERE dd.detalle_prestamo_id = dp.id)
-  AND p.fecha_vencimiento < CAST(GETDATE() AS DATE);
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Clientes con credencial activa y libros prestados con retraso en la devolución.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_clientes_prestamos_retrasados';
-GO
-
--- >>> Vistas/vw_clientes_prestamos_vigentes.sql
+-- >>> Vistas/01_vw_clientes_prestamos_vigentes.sql
 CREATE OR ALTER VIEW dbo.vw_clientes_prestamos_vigentes
 AS
 SELECT
@@ -1553,7 +1368,82 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Clientes con credencial activa y libros prestados sin devolver dentro del plazo.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_clientes_prestamos_vigentes';
 GO
 
--- >>> Vistas/vw_empleados_credenciales.sql
+-- >>> Vistas/02_vw_clientes_prestamos_retrasados.sql
+CREATE OR ALTER VIEW dbo.vw_clientes_prestamos_retrasados
+AS
+SELECT
+    cl.id                                   AS cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    pe.correo,
+    ca.credencial_id,
+    ca.vencimiento_credencial,
+    p.id                                    AS prestamo_id,
+    p.fecha_prestamo,
+    p.fecha_vencimiento                     AS fecha_limite_devolucion,
+    DATEDIFF(DAY, p.fecha_vencimiento, CAST(GETDATE() AS DATE)) AS dias_retraso,
+    l.id                                    AS libro_id,
+    l.titulo,
+    ej.codigo_barras,
+    ep.nombre                               AS estado_prestamo
+FROM dbo.prestamo p
+INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
+INNER JOIN dbo.ejemplar ej        ON ej.id = dp.ejemplar_id
+INNER JOIN dbo.libro l            ON l.id = ej.libro_id
+INNER JOIN dbo.estadoprestamo ep  ON ep.id = p.estado_prestamo_id
+INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
+INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
+INNER JOIN (
+    SELECT c.cliente_id,
+           MAX(c.id)                AS credencial_id,
+           MAX(c.fecha_vencimiento) AS vencimiento_credencial
+    FROM dbo.credencial c
+    WHERE c.estado = 'ACTIVA'
+      AND (c.fecha_vencimiento IS NULL OR c.fecha_vencimiento >= CAST(GETDATE() AS DATE))
+    GROUP BY c.cliente_id
+) ca ON ca.cliente_id = cl.id
+WHERE NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd WHERE dd.detalle_prestamo_id = dp.id)
+  AND p.fecha_vencimiento < CAST(GETDATE() AS DATE);
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Clientes con credencial activa y libros prestados con retraso en la devolución.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_clientes_prestamos_retrasados';
+GO
+
+-- >>> Vistas/03_vw_clientes_credenciales_inactivas.sql
+CREATE OR ALTER VIEW dbo.vw_clientes_credenciales_inactivas
+AS
+SELECT
+    cl.id                                   AS cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    pe.correo,
+    tc.nombre                               AS tipo_cliente,
+    c.id                                    AS credencial_id,
+    c.fecha_registro,
+    c.fecha_vencimiento,
+    c.estado                                AS estado_credencial,
+    CASE WHEN c.estado = 'ACTIVA' THEN N'VENCIDA POR FECHA' ELSE c.estado END AS situacion,
+    CASE WHEN c.fecha_vencimiento < CAST(GETDATE() AS DATE)
+         THEN DATEDIFF(DAY, c.fecha_vencimiento, CAST(GETDATE() AS DATE))
+         ELSE 0 END                         AS dias_vencida,
+    CASE WHEN EXISTS (SELECT 1
+                      FROM dbo.credencial c2
+                      WHERE c2.cliente_id = c.cliente_id
+                        AND c2.estado = 'ACTIVA'
+                        AND (c2.fecha_vencimiento IS NULL OR c2.fecha_vencimiento >= CAST(GETDATE() AS DATE)))
+         THEN N'SI' ELSE N'NO' END          AS tiene_otra_credencial_activa
+FROM dbo.credencial c
+INNER JOIN dbo.cliente cl      ON cl.id = c.cliente_id
+INNER JOIN dbo.persona pe      ON pe.id = cl.persona_id
+INNER JOIN dbo.tipocliente tc  ON tc.id = cl.tipo_cliente_id
+WHERE c.estado <> 'ACTIVA'
+   OR c.fecha_vencimiento < CAST(GETDATE() AS DATE);
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Credenciales de clientes inactivas, suspendidas o vencidas.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_clientes_credenciales_inactivas';
+GO
+
+-- >>> Vistas/04_vw_empleados_credenciales.sql
 CREATE OR ALTER VIEW dbo.vw_empleados_credenciales
 AS
 SELECT
@@ -1594,7 +1484,153 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Empleados con su cuenta de acceso y las credenciales de clientes que emitieron.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_empleados_credenciales';
 GO
 
--- >>> Vistas/vw_facturas.sql
+-- >>> Vistas/05_vw_historial_cliente.sql
+CREATE OR ALTER VIEW dbo.vw_historial_cliente
+AS
+SELECT
+    f.cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    N'COMPRA'                               AS tipo_movimiento,
+    f.fecha                                 AS fecha_movimiento,
+    f.id                                    AS numero_documento,
+    l.id                                    AS libro_id,
+    l.titulo,
+    ed.isbn,
+    df.cantidad,
+    df.cantidad * df.precio_unitario - df.descuento + df.monto_impuesto AS monto_total,
+    CAST(NULL AS DATE)                      AS fecha_limite_devolucion,
+    CAST(NULL AS DATETIME2(0))              AS fecha_devolucion,
+    N'COMPRADO'                             AS situacion
+FROM dbo.factura f
+INNER JOIN dbo.detallefactura df ON df.factura_id = f.id
+INNER JOIN dbo.libro l           ON l.id = df.libro_id
+INNER JOIN dbo.edicion ed        ON ed.id = l.edicion_id
+INNER JOIN dbo.cliente cl        ON cl.id = f.cliente_id
+INNER JOIN dbo.persona pe        ON pe.id = cl.persona_id
+
+UNION ALL
+
+SELECT
+    p.cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    N'PRÉSTAMO'                             AS tipo_movimiento,
+    CAST(p.fecha_prestamo AS DATETIME2(0))  AS fecha_movimiento,
+    p.id                                    AS numero_documento,
+    l.id                                    AS libro_id,
+    l.titulo,
+    ed.isbn,
+    1                                       AS cantidad,
+    CAST(NULL AS DECIMAL(12,2))             AS monto_total,
+    p.fecha_vencimiento                     AS fecha_limite_devolucion,
+    dev.fecha_devolucion,
+    CASE WHEN dev.id IS NOT NULL THEN N'DEVUELTO'
+         WHEN p.fecha_vencimiento < CAST(GETDATE() AS DATE) THEN N'RETRASADO'
+         ELSE N'VIGENTE' END                AS situacion
+FROM dbo.prestamo p
+INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
+INNER JOIN dbo.ejemplar ej        ON ej.id = dp.ejemplar_id
+INNER JOIN dbo.libro l            ON l.id = ej.libro_id
+INNER JOIN dbo.edicion ed         ON ed.id = l.edicion_id
+INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
+INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
+LEFT JOIN dbo.detalledevolucion dd ON dd.detalle_prestamo_id = dp.id
+LEFT JOIN dbo.devolucion dev       ON dev.id = dd.devolucion_id;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Historial de libros comprados y prestados por cada cliente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_historial_cliente';
+GO
+
+-- >>> Vistas/06_vw_inventario_libros.sql
+CREATE OR ALTER VIEW dbo.vw_inventario_libros
+AS
+SELECT
+    l.id                                    AS libro_id,
+    l.titulo,
+    l.descripcion,
+    l.precio_venta,
+    l.permite_digital,
+    ed.isbn,
+    ed.numero_edicion,
+    ed.anio_publicacion,
+    eo.nombre                               AS editorial,
+    i.nombre                                AS idioma,
+    fl.nombre                               AS formato,
+    (SELECT STRING_AGG(CONCAT_WS(' ', pa.nombre, pa.segundo_nombre, pa.apellido, pa.segundo_apellido), ', ')
+                WITHIN GROUP (ORDER BY la.orden_autoria)
+     FROM dbo.libroautor la
+     INNER JOIN dbo.autor a    ON a.id = la.autor_id
+     INNER JOIN dbo.persona pa ON pa.id = a.persona_id
+     WHERE la.libro_id = l.id)              AS autores,
+    (SELECT STRING_AGG(c.nombre, ', ') WITHIN GROUP (ORDER BY c.nombre)
+     FROM dbo.librocategoria lc
+     INNER JOIN dbo.categoria c ON c.id = lc.categoria_id
+     WHERE lc.libro_id = l.id)              AS categorias,
+    ISNULL(ex.total_ejemplares, 0)          AS total_ejemplares,
+    ISNULL(ex.ejemplares_disponibles, 0)    AS ejemplares_disponibles,
+    ex.costo_promedio_adquisicion,
+    ISNULL(inv.disponible, 0)               AS stock_disponible,
+    ISNULL(inv.danada, 0)                   AS stock_danado,
+    ISNULL(inv.reservada, 0)                AS stock_reservado
+FROM dbo.libro l
+INNER JOIN dbo.edicion ed        ON ed.id = l.edicion_id
+INNER JOIN dbo.editorial eo      ON eo.id = ed.editorial_id
+INNER JOIN dbo.idioma i          ON i.id = ed.idioma_id
+INNER JOIN dbo.formatolibro fl   ON fl.id = ed.formato_libro_id
+LEFT JOIN (
+    SELECT ej.libro_id,
+           COUNT(*) AS total_ejemplares,
+           SUM(CASE WHEN ee.nombre = N'Disponible' THEN 1 ELSE 0 END) AS ejemplares_disponibles,
+           AVG(ej.precio_adquisicion) AS costo_promedio_adquisicion
+    FROM dbo.ejemplar ej
+    INNER JOIN dbo.estadoejemplar ee ON ee.id = ej.estado_ejemplar_id
+    GROUP BY ej.libro_id
+) ex ON ex.libro_id = l.id
+LEFT JOIN (
+    SELECT libro_id,
+           SUM(cantidad_disponible) AS disponible,
+           SUM(cantidad_danada)     AS danada,
+           SUM(cantidad_reservada)  AS reservada
+    FROM dbo.inventariosucursal
+    GROUP BY libro_id
+) inv ON inv.libro_id = l.id;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Información general de cada libro con autores, categorías, ejemplares y stock.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_inventario_libros';
+GO
+
+-- >>> Vistas/07_vw_multas_pendientes_cliente.sql
+CREATE OR ALTER VIEW dbo.vw_multas_pendientes_cliente
+AS
+SELECT
+    cl.id                                   AS cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    pe.correo,
+    COUNT(m.id)                             AS cantidad_multas_pendientes,
+    SUM(m.monto)                            AS monto_total_pendiente,
+    SUM(ISNULL(pg.total_pagado, 0))         AS total_abonado,
+    SUM(m.monto - ISNULL(pg.total_pagado, 0)) AS saldo_pendiente,
+    MIN(m.fecha_generacion)                 AS multa_mas_antigua
+FROM dbo.multa m
+INNER JOIN dbo.detalleprestamo dp ON dp.id = m.detalle_prestamo_id
+INNER JOIN dbo.prestamo p         ON p.id = dp.prestamo_id
+INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
+INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
+LEFT JOIN (
+    SELECT multa_id, SUM(monto) AS total_pagado
+    FROM dbo.pagomulta
+    GROUP BY multa_id
+) pg ON pg.multa_id = m.id
+WHERE m.estado = 'PENDIENTE'
+GROUP BY cl.id, pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido, pe.correo;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Multas pendientes por cliente con monto total, abonos y saldo.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_multas_pendientes_cliente';
+GO
+
+-- >>> Vistas/08_vw_facturas.sql
 CREATE OR ALTER VIEW dbo.vw_facturas
 AS
 SELECT
@@ -1665,123 +1701,7 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Facturas con totales, canal de venta, formas de pago y estado de pago.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_facturas';
 GO
 
--- >>> Vistas/vw_historial_cliente.sql
-CREATE OR ALTER VIEW dbo.vw_historial_cliente
-AS
-SELECT
-    f.cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    N'COMPRA'                               AS tipo_movimiento,
-    f.fecha                                 AS fecha_movimiento,
-    f.id                                    AS numero_documento,
-    l.id                                    AS libro_id,
-    l.titulo,
-    ed.isbn,
-    df.cantidad,
-    df.cantidad * df.precio_unitario - df.descuento + df.monto_impuesto AS monto_total,
-    CAST(NULL AS DATE)                      AS fecha_limite_devolucion,
-    CAST(NULL AS DATETIME2(0))              AS fecha_devolucion,
-    N'COMPRADO'                             AS situacion
-FROM dbo.factura f
-INNER JOIN dbo.detallefactura df ON df.factura_id = f.id
-INNER JOIN dbo.libro l           ON l.id = df.libro_id
-INNER JOIN dbo.edicion ed        ON ed.id = l.edicion_id
-INNER JOIN dbo.cliente cl        ON cl.id = f.cliente_id
-INNER JOIN dbo.persona pe        ON pe.id = cl.persona_id
-
-UNION ALL
-
-SELECT
-    p.cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    N'PRÉSTAMO'                             AS tipo_movimiento,
-    CAST(p.fecha_prestamo AS DATETIME2(0))  AS fecha_movimiento,
-    p.id                                    AS numero_documento,
-    l.id                                    AS libro_id,
-    l.titulo,
-    ed.isbn,
-    1                                       AS cantidad,
-    CAST(NULL AS DECIMAL(12,2))             AS monto_total,
-    p.fecha_vencimiento                     AS fecha_limite_devolucion,
-    dev.fecha_devolucion,
-    CASE WHEN dev.id IS NOT NULL THEN N'DEVUELTO'
-         WHEN p.fecha_vencimiento < CAST(GETDATE() AS DATE) THEN N'RETRASADO'
-         ELSE N'VIGENTE' END                AS situacion
-FROM dbo.prestamo p
-INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
-INNER JOIN dbo.ejemplar ej        ON ej.id = dp.ejemplar_id
-INNER JOIN dbo.libro l            ON l.id = ej.libro_id
-INNER JOIN dbo.edicion ed         ON ed.id = l.edicion_id
-INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
-INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
-LEFT JOIN dbo.detalledevolucion dd ON dd.detalle_prestamo_id = dp.id
-LEFT JOIN dbo.devolucion dev       ON dev.id = dd.devolucion_id;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Historial de libros comprados y prestados por cada cliente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_historial_cliente';
-GO
-
--- >>> Vistas/vw_inventario_libros.sql
-CREATE OR ALTER VIEW dbo.vw_inventario_libros
-AS
-SELECT
-    l.id                                    AS libro_id,
-    l.titulo,
-    l.descripcion,
-    l.precio_venta,
-    l.permite_digital,
-    ed.isbn,
-    ed.numero_edicion,
-    ed.anio_publicacion,
-    eo.nombre                               AS editorial,
-    i.nombre                                AS idioma,
-    fl.nombre                               AS formato,
-    (SELECT STRING_AGG(CONCAT_WS(' ', pa.nombre, pa.segundo_nombre, pa.apellido, pa.segundo_apellido), ', ')
-                WITHIN GROUP (ORDER BY la.orden_autoria)
-     FROM dbo.libroautor la
-     INNER JOIN dbo.autor a    ON a.id = la.autor_id
-     INNER JOIN dbo.persona pa ON pa.id = a.persona_id
-     WHERE la.libro_id = l.id)              AS autores,
-    (SELECT STRING_AGG(c.nombre, ', ') WITHIN GROUP (ORDER BY c.nombre)
-     FROM dbo.librocategoria lc
-     INNER JOIN dbo.categoria c ON c.id = lc.categoria_id
-     WHERE lc.libro_id = l.id)              AS categorias,
-    ISNULL(ex.total_ejemplares, 0)          AS total_ejemplares,
-    ISNULL(ex.ejemplares_disponibles, 0)    AS ejemplares_disponibles,
-    ex.costo_promedio_adquisicion,
-    ISNULL(inv.disponible, 0)               AS stock_disponible,
-    ISNULL(inv.danada, 0)                   AS stock_danado,
-    ISNULL(inv.reservada, 0)                AS stock_reservado
-FROM dbo.libro l
-INNER JOIN dbo.edicion ed        ON ed.id = l.edicion_id
-INNER JOIN dbo.editorial eo      ON eo.id = ed.editorial_id
-INNER JOIN dbo.idioma i          ON i.id = ed.idioma_id
-INNER JOIN dbo.formatolibro fl   ON fl.id = ed.formato_libro_id
-LEFT JOIN (
-    SELECT ej.libro_id,
-           COUNT(*) AS total_ejemplares,
-           SUM(CASE WHEN ee.nombre = N'Disponible' THEN 1 ELSE 0 END) AS ejemplares_disponibles,
-           AVG(ej.precio_adquisicion) AS costo_promedio_adquisicion
-    FROM dbo.ejemplar ej
-    INNER JOIN dbo.estadoejemplar ee ON ee.id = ej.estado_ejemplar_id
-    GROUP BY ej.libro_id
-) ex ON ex.libro_id = l.id
-LEFT JOIN (
-    SELECT libro_id,
-           SUM(cantidad_disponible) AS disponible,
-           SUM(cantidad_danada)     AS danada,
-           SUM(cantidad_reservada)  AS reservada
-    FROM dbo.inventariosucursal
-    GROUP BY libro_id
-) inv ON inv.libro_id = l.id;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Información general de cada libro con autores, categorías, ejemplares y stock.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_inventario_libros';
-GO
-
--- >>> Vistas/vw_inventario_sucursal.sql
+-- >>> Vistas/09_vw_inventario_sucursal.sql
 CREATE OR ALTER VIEW dbo.vw_inventario_sucursal
 AS
 SELECT
@@ -1820,66 +1740,7 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Unidades disponibles, dañadas y reservadas por sucursal.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_inventario_sucursal';
 GO
 
--- >>> Vistas/vw_lista_deseos_detalle.sql
-CREATE OR ALTER VIEW dbo.vw_lista_deseos_detalle
-AS
-SELECT
-    ld.cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    l.id                                    AS libro_id,
-    l.titulo,
-    l.precio_venta,
-    ISNULL(inv.disponible, 0)               AS unidades_disponibles,
-    CASE WHEN l.permite_digital = 1 THEN N'SI' ELSE N'NO' END AS disponible_digital,
-    CASE WHEN ld.notificar_descuento = 1 THEN N'SI' ELSE N'NO' END AS avisar_descuento,
-    ld.fecha_agregado,
-    DATEDIFF(DAY, ld.fecha_agregado, CAST(GETDATE() AS DATE)) AS dias_en_lista
-FROM dbo.listadeseo ld
-INNER JOIN dbo.cliente cl  ON cl.id = ld.cliente_id
-INNER JOIN dbo.persona pe  ON pe.id = cl.persona_id
-INNER JOIN dbo.libro l     ON l.id = ld.libro_id
-LEFT JOIN (
-    SELECT libro_id, SUM(cantidad_disponible) AS disponible
-    FROM dbo.inventariosucursal
-    GROUP BY libro_id
-) inv ON inv.libro_id = l.id;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Lista de deseos de cada cliente con precio y disponibilidad.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_lista_deseos_detalle';
-GO
-
--- >>> Vistas/vw_multas_pendientes_cliente.sql
-CREATE OR ALTER VIEW dbo.vw_multas_pendientes_cliente
-AS
-SELECT
-    cl.id                                   AS cliente_id,
-    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
-    pe.correo,
-    COUNT(m.id)                             AS cantidad_multas_pendientes,
-    SUM(m.monto)                            AS monto_total_pendiente,
-    SUM(ISNULL(pg.total_pagado, 0))         AS total_abonado,
-    SUM(m.monto - ISNULL(pg.total_pagado, 0)) AS saldo_pendiente,
-    MIN(m.fecha_generacion)                 AS multa_mas_antigua
-FROM dbo.multa m
-INNER JOIN dbo.detalleprestamo dp ON dp.id = m.detalle_prestamo_id
-INNER JOIN dbo.prestamo p         ON p.id = dp.prestamo_id
-INNER JOIN dbo.cliente cl         ON cl.id = p.cliente_id
-INNER JOIN dbo.persona pe         ON pe.id = cl.persona_id
-LEFT JOIN (
-    SELECT multa_id, SUM(monto) AS total_pagado
-    FROM dbo.pagomulta
-    GROUP BY multa_id
-) pg ON pg.multa_id = m.id
-WHERE m.estado = 'PENDIENTE'
-GROUP BY cl.id, pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido, pe.correo;
-
-GO
-
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Multas pendientes por cliente con monto total, abonos y saldo.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_multas_pendientes_cliente';
-GO
-
--- >>> Vistas/vw_ranking_libros.sql
+-- >>> Vistas/10_vw_ranking_libros.sql
 CREATE OR ALTER VIEW dbo.vw_ranking_libros
 AS
 SELECT
@@ -1930,7 +1791,49 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Ranking de libros por préstamos, ventas y calificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_ranking_libros';
 GO
 
--- >>> Vistas/vw_reservas_pendientes.sql
+-- >>> Vistas/11_vw_cliente_limite_prestamos.sql
+CREATE OR ALTER VIEW dbo.vw_cliente_limite_prestamos
+AS
+SELECT
+    cl.id                                   AS cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    tc.nombre                               AS tipo_cliente,
+    tc.limite_prestamos,
+    tc.limite_renovaciones,
+    ISNULL(pu.en_uso, 0)                    AS prestamos_en_uso,
+    CASE WHEN tc.limite_prestamos - ISNULL(pu.en_uso, 0) > 0
+         THEN tc.limite_prestamos - ISNULL(pu.en_uso, 0)
+         ELSE 0 END                         AS cupos_disponibles,
+    CASE WHEN cr.cliente_id IS NULL THEN N'NO' ELSE N'SI' END AS credencial_activa,
+    ISNULL(mp.saldo_pendiente, 0)           AS saldo_multas_pendientes,
+    CASE WHEN cr.cliente_id IS NULL THEN N'NO - CREDENCIAL INACTIVA O VENCIDA'
+         WHEN ISNULL(mp.saldo_pendiente, 0) > 0 THEN N'NO - MULTAS PENDIENTES'
+         WHEN ISNULL(pu.en_uso, 0) >= tc.limite_prestamos THEN N'NO - LÍMITE ALCANZADO'
+         ELSE N'SI' END                     AS puede_prestar
+FROM dbo.cliente cl
+INNER JOIN dbo.persona pe      ON pe.id = cl.persona_id
+INNER JOIN dbo.tipocliente tc  ON tc.id = cl.tipo_cliente_id
+LEFT JOIN (
+    SELECT p.cliente_id, COUNT(dp.id) AS en_uso
+    FROM dbo.prestamo p
+    INNER JOIN dbo.detalleprestamo dp ON dp.prestamo_id = p.id
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd WHERE dd.detalle_prestamo_id = dp.id)
+    GROUP BY p.cliente_id
+) pu ON pu.cliente_id = cl.id
+LEFT JOIN (
+    SELECT DISTINCT c.cliente_id
+    FROM dbo.credencial c
+    WHERE c.estado = 'ACTIVA'
+      AND (c.fecha_vencimiento IS NULL OR c.fecha_vencimiento >= CAST(GETDATE() AS DATE))
+) cr ON cr.cliente_id = cl.id
+LEFT JOIN dbo.vw_multas_pendientes_cliente mp ON mp.cliente_id = cl.id;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Préstamos en uso contra el límite de cada cliente e indicador de si puede prestar.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_cliente_limite_prestamos';
+GO
+
+-- >>> Vistas/12_vw_reservas_pendientes.sql
 CREATE OR ALTER VIEW dbo.vw_reservas_pendientes
 AS
 SELECT
@@ -1962,7 +1865,104 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Reservas pendientes con la posición del cliente en la fila.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_reservas_pendientes';
 GO
 
--- >>> Vistas/vw_ventas_por_canal.sql
+-- >>> Vistas/13_vw_biblioteca_digital_cliente.sql
+CREATE OR ALTER VIEW dbo.vw_biblioteca_digital_cliente
+AS
+SELECT
+    pl.cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    l.id                                    AS libro_id,
+    l.titulo,
+    CASE rd.tipo WHEN 'T' THEN N'TEXTO' ELSE N'AUDIO' END AS tipo_recurso,
+    pl.posicion_actual,
+    CASE rd.tipo WHEN 'T' THEN rd.total_paginas ELSE rd.duracion_segundos END AS posicion_final,
+    pl.porcentaje,
+    CASE WHEN pl.porcentaje >= 100 THEN N'TERMINADO'
+         WHEN rd.tipo = 'T' THEN N'LEYENDO'
+         ELSE N'ESCUCHANDO' END             AS situacion,
+    pl.fecha_inicio,
+    pl.fecha_ultima_lectura,
+    ISNULL(nt.total_notas, 0)               AS total_notas
+FROM dbo.progresolectura pl
+INNER JOIN dbo.recursodigital rd ON rd.id = pl.recurso_digital_id
+INNER JOIN dbo.libro l           ON l.id = rd.libro_id
+INNER JOIN dbo.cliente cl        ON cl.id = pl.cliente_id
+INNER JOIN dbo.persona pe        ON pe.id = cl.persona_id
+LEFT JOIN (
+    SELECT nl.cliente_id, nl.recurso_digital_id, COUNT(*) AS total_notas
+    FROM dbo.notalectura nl
+    GROUP BY nl.cliente_id, nl.recurso_digital_id
+) nt ON nt.cliente_id = pl.cliente_id AND nt.recurso_digital_id = pl.recurso_digital_id
+WHERE rd.estado = 1;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Avance de lectura y audio de cada cliente en la biblioteca digital.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_biblioteca_digital_cliente';
+GO
+
+-- >>> Vistas/14_vw_catalogo_digital.sql
+CREATE OR ALTER VIEW dbo.vw_catalogo_digital
+AS
+SELECT
+    l.id                                    AS libro_id,
+    l.titulo,
+    CASE WHEN rt.id IS NULL THEN N'NO' ELSE N'SI' END AS tiene_texto,
+    rt.total_paginas,
+    CASE WHEN ra.id IS NULL THEN N'NO' ELSE N'SI' END AS tiene_audio,
+    CASE WHEN ra.id IS NULL THEN NULL
+         WHEN ra.generado_ia = 1 THEN N'SI' ELSE N'NO' END AS audio_generado_ia,
+    ra.voz_narracion,
+    CONVERT(VARCHAR(8), DATEADD(SECOND, ra.duracion_segundos, CAST('00:00:00' AS TIME(0))), 108) AS duracion_audio,
+    ISNULL(lc.lectores, 0)                  AS lectores,
+    lc.avance_promedio
+FROM dbo.libro l
+LEFT JOIN dbo.recursodigital rt ON rt.libro_id = l.id AND rt.tipo = 'T' AND rt.estado = 1
+LEFT JOIN dbo.recursodigital ra ON ra.libro_id = l.id AND ra.tipo = 'A' AND ra.estado = 1
+LEFT JOIN (
+    SELECT rd.libro_id,
+           COUNT(DISTINCT pl.cliente_id)               AS lectores,
+           CAST(AVG(pl.porcentaje) AS DECIMAL(5,2))    AS avance_promedio
+    FROM dbo.progresolectura pl
+    INNER JOIN dbo.recursodigital rd ON rd.id = pl.recurso_digital_id
+    GROUP BY rd.libro_id
+) lc ON lc.libro_id = l.id
+WHERE l.permite_digital = 1;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Libros con derechos digitales: texto, audio, IA, duración y lectores.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_catalogo_digital';
+GO
+
+-- >>> Vistas/15_vw_lista_deseos_detalle.sql
+CREATE OR ALTER VIEW dbo.vw_lista_deseos_detalle
+AS
+SELECT
+    ld.cliente_id,
+    CONCAT_WS(' ', pe.nombre, pe.segundo_nombre, pe.apellido, pe.segundo_apellido) AS cliente,
+    l.id                                    AS libro_id,
+    l.titulo,
+    l.precio_venta,
+    ISNULL(inv.disponible, 0)               AS unidades_disponibles,
+    CASE WHEN l.permite_digital = 1 THEN N'SI' ELSE N'NO' END AS disponible_digital,
+    CASE WHEN ld.notificar_descuento = 1 THEN N'SI' ELSE N'NO' END AS avisar_descuento,
+    ld.fecha_agregado,
+    DATEDIFF(DAY, ld.fecha_agregado, CAST(GETDATE() AS DATE)) AS dias_en_lista
+FROM dbo.listadeseo ld
+INNER JOIN dbo.cliente cl  ON cl.id = ld.cliente_id
+INNER JOIN dbo.persona pe  ON pe.id = cl.persona_id
+INNER JOIN dbo.libro l     ON l.id = ld.libro_id
+LEFT JOIN (
+    SELECT libro_id, SUM(cantidad_disponible) AS disponible
+    FROM dbo.inventariosucursal
+    GROUP BY libro_id
+) inv ON inv.libro_id = l.id;
+
+GO
+
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Lista de deseos de cada cliente con precio y disponibilidad.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_lista_deseos_detalle';
+GO
+
+-- >>> Vistas/16_vw_ventas_por_canal.sql
 CREATE OR ALTER VIEW dbo.vw_ventas_por_canal
 AS
 SELECT
