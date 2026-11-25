@@ -1,0 +1,19 @@
+{
+  "name": "mucho-texto",
+  "private": true,
+  "description": "Mucho Texto - biblioteca y librería (Proyecto final Bases de Datos I, UNAH-Comayagua)",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @muchotexto/shared build && pnpm --parallel --filter @muchotexto/api --filter @muchotexto/web dev",
+    "build": "pnpm -r build",
+    "tipos": "pnpm --filter @muchotexto/shared build && pnpm -r tipos",
+    "db:script": "node scripts/generar-script-completo.mjs",
+    "db:check": "node scripts/generar-script-completo.mjs --check",
+    "db:reiniciar": "docker compose run --rm db-init",
+    "db:pruebas": "docker compose run --rm -e PRUEBAS=1 db-init",
+    "verificar": "pnpm db:check && pnpm tipos && pnpm build"
+  }
+}

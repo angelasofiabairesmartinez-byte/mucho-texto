@@ -1,0 +1,41 @@
+# Mucho Texto - servicios locales
+#   docker compose up -d            -> SQL Server + creación de la BD con datos
+#   docker compose run --rm db-init -> vuelve a crear la BD desde cero
+# Los servicios de monitoreo, S3 y SearXNG se agregan con perfiles
+# (docker compose --profile extras up -d) cuando estén listos.
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    container_name: muchotexto-db
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    ports:
+      - "${DB_PORT:-1433}:1433"
+    volumes:
+      - db-datos:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "1433"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      PRUEBAS: ${PRUEBAS:-0}
+    volumes:
+      - ./base-de-datos:/base-de-datos:ro
+    entrypoint: ["bash", "/base-de-datos/ejecutar.sh"]
+    restart: "no"
+
+volumes:
+  db-datos:

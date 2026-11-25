@@ -1,0 +1,30 @@
+/* ============================================================
+   Prueba: dbo.sp_registrar_prestamo
+   Copia este archivo como <nombre_del_sp>.test.sql
+   Cada prueba corre dentro de una transacción que se revierte,
+   así no deja datos basura para las siguientes pruebas.
+   ============================================================ */
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+-- Caso 1: debe funcionar
+BEGIN TRANSACTION;
+    DECLARE @r TABLE (prestamo_id INT);
+    INSERT INTO @r EXEC dbo.sp_registrar_prestamo @cliente_id = 31, @empleado_id = 1, @ejemplares = N'[5]';
+    IF NOT EXISTS (SELECT 1 FROM @r WHERE prestamo_id IS NOT NULL)
+        THROW 50910, N'PRUEBA FALLIDA: sp_registrar_prestamo no devolvió el id.', 1;
+ROLLBACK TRANSACTION;
+
+-- Caso 2: debe fallar (cliente que no existe)
+DECLARE @fallo BIT = 0;
+BEGIN TRY
+    EXEC dbo.sp_registrar_prestamo @cliente_id = -1, @empleado_id = 1, @ejemplares = N'[5]';
+END TRY
+BEGIN CATCH
+    SET @fallo = 1;
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+END CATCH
+IF @fallo = 0
+    THROW 50911, N'PRUEBA FALLIDA: sp_registrar_prestamo aceptó un cliente inexistente.', 1;
+
+PRINT N'OK sp_registrar_prestamo';

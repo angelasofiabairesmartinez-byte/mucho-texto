@@ -1,0 +1,8 @@
+packages:
+  - "fuentes/apps/*"
+  - "fuentes/packages/*"
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - prisma
+  - esbuild
+  - "@tailwindcss/oxide"

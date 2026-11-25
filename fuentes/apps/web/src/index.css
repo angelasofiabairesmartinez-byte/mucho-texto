@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Estilo base sencillo. El diseño final se decide en equipo (2-3 dic). */
+body {
+  @apply bg-stone-50 text-stone-900;
+}

@@ -1,0 +1,36 @@
+/* ============================================================
+   Procedimiento: dbo.sp_nombre_del_procedimiento
+   Autor: <nombre>          Fecha: AAAA-MM-DD
+   Descripción: Qué hace, en una o dos líneas.
+   Parámetros: @param1 (qué es), @param2 (qué es)
+   Devuelve: columnas del SELECT final (ej. prestamo_id)
+   Errores: 50001 <motivo>, 50002 <motivo>
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_nombre_del_procedimiento
+    @param1 INT,
+    @param2 NVARCHAR(100)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    DECLARE @id INT;
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.cliente c WHERE c.id = @param1)
+        THROW 50001, N'El cliente no existe.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            -- INSERT / UPDATE de las tablas involucradas
+            SET @id = SCOPE_IDENTITY();
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @id AS id;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
