@@ -3,6 +3,13 @@
 Cada SP o función se describe aquí **antes** de programarlo, para que la API y las pantallas puedan avanzar con datos de prueba.
 Responsable de llenar la tabla: Bloque 1 (Ángel) — **miércoles 25 de noviembre**. Los del módulo digital: Bloque 3.
 
+## Reglas de negocio acordadas
+
+| Regla | Valor | Decidido |
+| --- | --- | --- |
+| Duración de un préstamo | 15 días desde la fecha de préstamo | 2026-11-25 |
+| Multa por atraso | L 5.00 por cada día de atraso, por ejemplar | 2026-11-25 |
+
 Formato de cada fila: parámetros con tipo, columnas que devuelve el `SELECT` final, y errores `THROW` con su mensaje.
 
 ## Tanda 1 — viernes 27 de noviembre
