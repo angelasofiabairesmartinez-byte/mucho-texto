@@ -12,3 +12,7 @@ Thumbs.db
 !.vscode/extensions.json
 fuentes/apps/api/src/generated/
 *.pdf
+
+# El proyecto usa pnpm: no subir lockfiles de npm o yarn
+package-lock.json
+yarn.lock
