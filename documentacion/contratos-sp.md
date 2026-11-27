@@ -43,10 +43,10 @@ Formato de cada fila: parámetros con tipo, columnas que devuelve el `SELECT` fi
 
 | Objeto | Parámetros | Devuelve | Errores | RF |
 | --- | --- | --- | --- | --- |
-| `sp_guardar_progreso_lectura` | | | | RF-10.2, RF-11.6 |
-| `sp_registrar_audiolibro` | | | | RF-20.3 |
-| `sp_retirar_recurso_digital` | | | | RF-20.5 |
-| `fn_calcular_porcentaje_progreso` | | | | RF-10.2 |
+| `sp_guardar_progreso_lectura` | `@cliente_id INT`, `@recurso_digital_id INT`, `@posicion INT` (página en texto, segundo en audio) | `progreso_id INT`, `posicion_actual INT`, `porcentaje DECIMAL(5,2)`, `capitulo_numero SMALLINT`, `capitulo_titulo NVARCHAR(150)` (NULL si no hay capítulos). Crea el progreso la primera vez y lo actualiza las siguientes | 50001 El cliente no existe · 50002 El recurso digital no existe o fue retirado · 50003 La posición no es válida para este recurso | RF-10.2, RF-11.6 |
+| `sp_registrar_audiolibro` | `@libro_id INT`, `@ruta_archivo NVARCHAR(300)`, `@duracion_segundos INT`, `@generado_ia SMALLINT = 1`, `@voz_narracion NVARCHAR(60) = NULL`, `@capitulos NVARCHAR(MAX) = NULL` (JSON, ej. `'[{"numero":1,"titulo":"Capítulo 1","posicion_inicio":0}]'`) | `recurso_digital_id INT`, `libro_id INT`, `duracion_segundos INT`, `capitulos INT`. Si el libro tenía un audiolibro retirado, lo reemplaza y lo reactiva | 50001 El libro no existe · 50002 La duración debe ser mayor que 0 · 50003 El libro ya tiene un audiolibro activo · 50004 Los capítulos no tienen un formato válido · 50005 Un capítulo empieza fuera de la duración del audio · 50006 generado_ia debe ser 0 o 1 | RF-20.3 |
+| `sp_retirar_recurso_digital` | `@recurso_digital_id INT` | `recurso_digital_id INT`, `libro_id INT`, `tipo NVARCHAR(1)` (T: Texto; A: Audio), `lectores_afectados INT`. Solo cambia el estado a 0; no borra progreso, notas ni capítulos | 50001 El recurso digital no existe · 50002 El recurso digital ya estaba retirado | RF-20.5 |
+| `fn_calcular_porcentaje_progreso` | `@recurso_digital_id INT`, `@posicion INT` | `DECIMAL(5,2)` entre 0 y 100: posición entre total de páginas (texto) o duración en segundos (audio), por 100; 0 si el recurso no existe o no tiene total | No aplica | RF-10.2 |
 
 ## Ya existentes (segunda entrega)
 
