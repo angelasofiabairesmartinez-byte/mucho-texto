@@ -1983,6 +1983,57 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Ventas por mes separadas en tienda y en línea.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_ventas_por_canal';
 GO
 
+-- >>> Funciones/fn_calcular_multa.sql
+/* ============================================================
+   Función: dbo.fn_calcular_multa
+   Autor: Ángel Fabricio          Fecha: 2026-11-26
+   Descripción: Calcula la multa de un ejemplar prestado: días de atraso
+                (fecha de devolución menos vencimiento del préstamo) x L 5.00.
+   Parámetros: @detalle_prestamo_id (ejemplar dentro del préstamo),
+               @fecha_devolucion (fecha en que se devuelve)
+   Devuelve: DECIMAL(10,2), la multa; 0 si no hay atraso o el detalle no existe
+   ============================================================ */
+CREATE OR ALTER FUNCTION dbo.fn_calcular_multa (@detalle_prestamo_id INT, @fecha_devolucion DATE)
+RETURNS DECIMAL(10,2)
+AS
+BEGIN
+    DECLARE @dias_atraso INT;
+
+    SELECT @dias_atraso = DATEDIFF(DAY, p.fecha_vencimiento, @fecha_devolucion)
+    FROM dbo.detalleprestamo d
+    INNER JOIN dbo.prestamo p ON p.id = d.prestamo_id
+    WHERE d.id = @detalle_prestamo_id;
+
+    IF @dias_atraso IS NULL OR @dias_atraso <= 0
+        RETURN 0.00;
+
+    RETURN CAST(@dias_atraso * 5.00 AS DECIMAL(10,2));
+END
+GO
+
+-- >>> Funciones/fn_ejemplares_disponibles.sql
+/* ============================================================
+   Función: dbo.fn_ejemplares_disponibles
+   Autor: Ángel Fabricio          Fecha: 2026-11-26
+   Descripción: Cuenta los ejemplares de un libro con estado 1 (Disponible).
+   Parámetros: @libro_id (id del libro)
+   Devuelve: INT, cantidad de ejemplares disponibles (0 si no hay o el libro no existe)
+   ============================================================ */
+CREATE OR ALTER FUNCTION dbo.fn_ejemplares_disponibles (@libro_id INT)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @resultado INT;
+
+    SELECT @resultado = COUNT(*)
+    FROM dbo.ejemplar e
+    WHERE e.libro_id = @libro_id
+      AND e.estado_ejemplar_id = 1;
+
+    RETURN @resultado;
+END
+GO
+
 -- >>> Funciones/fn_historial_cliente.sql
 -- Función: historial de un cliente específico
 CREATE OR ALTER FUNCTION dbo.fn_historial_cliente (@cliente_id INT)
@@ -1992,6 +2043,174 @@ RETURN
 (
     SELECT * FROM dbo.vw_historial_cliente WHERE cliente_id = @cliente_id
 );
+GO
+
+-- >>> Funciones/fn_prestamos_activos_cliente.sql
+/* ============================================================
+   Función: dbo.fn_prestamos_activos_cliente
+   Autor: Ángel Fabricio          Fecha: 2026-11-26
+   Descripción: Cuenta los préstamos no devueltos de un cliente
+                (estados 1 Activo, 3 Vencido, 4 Renovado y 8 En mora).
+   Parámetros: @cliente_id (id del cliente)
+   Devuelve: INT, cantidad de préstamos no devueltos (0 si no tiene o no existe)
+   ============================================================ */
+CREATE OR ALTER FUNCTION dbo.fn_prestamos_activos_cliente (@cliente_id INT)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @resultado INT;
+
+    SELECT @resultado = COUNT(*)
+    FROM dbo.prestamo p
+    WHERE p.cliente_id = @cliente_id
+      AND p.estado_prestamo_id IN (1, 3, 4, 8);
+
+    RETURN @resultado;
+END
+GO
+
+-- >>> Funciones/fn_puede_prestar.sql
+/* ============================================================
+   Función: dbo.fn_puede_prestar
+   Autor: Ángel Fabricio          Fecha: 2026-11-26
+   Descripción: Indica si un cliente puede recibir un préstamo: credencial
+                ACTIVA y vigente, sin multas PENDIENTE y por debajo de
+                su límite de préstamos (tipocliente.limite_prestamos).
+   Parámetros: @cliente_id (id del cliente)
+   Devuelve: BIT, 1 si puede prestar; 0 si no (o si el cliente no existe)
+   ============================================================ */
+CREATE OR ALTER FUNCTION dbo.fn_puede_prestar (@cliente_id INT)
+RETURNS BIT
+AS
+BEGIN
+    DECLARE @resultado BIT;
+
+    SELECT @resultado =
+        CASE
+            WHEN EXISTS (SELECT 1
+                         FROM dbo.credencial cr
+                         WHERE cr.cliente_id = c.id
+                           AND cr.estado = N'ACTIVA'
+                           AND cr.fecha_vencimiento >= CAST(GETDATE() AS DATE))
+             AND NOT EXISTS (SELECT 1
+                             FROM dbo.multa m
+                             INNER JOIN dbo.detalleprestamo d ON d.id = m.detalle_prestamo_id
+                             INNER JOIN dbo.prestamo p ON p.id = d.prestamo_id
+                             WHERE p.cliente_id = c.id
+                               AND m.estado = N'PENDIENTE')
+             AND dbo.fn_prestamos_activos_cliente(c.id) < tc.limite_prestamos
+            THEN 1
+            ELSE 0
+        END
+    FROM dbo.cliente c
+    INNER JOIN dbo.tipocliente tc ON tc.id = c.tipo_cliente_id
+    WHERE c.id = @cliente_id;
+
+    RETURN ISNULL(@resultado, 0);
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_cliente.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_cliente
+   Autor: Ángel Fabricio          Fecha: 2026-11-26
+   Descripción: Registra un cliente completo en una transacción: persona,
+                teléfono, cliente, credencial ACTIVA por un año y usuario
+                con rol Cliente.
+   Parámetros: @nombre, @segundo_nombre, @apellido, @segundo_apellido,
+               @correo, @genero (M o F), @fecha_nacimiento, @telefono,
+               @tipo_telefono (P, L o F), @tipo_cliente_id,
+               @nombre_usuario, @contrasena_hash (lo calcula la API),
+               @empleado_id (quien registra; opcional)
+   Devuelve: cliente_id, persona_id, credencial_id, usuario_id,
+             fecha_vencimiento (de la credencial)
+   Errores: 50001 El correo ya está registrado, 50002 El tipo de cliente
+            no existe, 50003 El empleado no existe, 50004 El nombre de
+            usuario ya existe, 50005 El tipo de teléfono no es válido,
+            50006 El género no es válido
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_cliente
+    @nombre NVARCHAR(60),
+    @segundo_nombre NVARCHAR(60) = NULL,
+    @apellido NVARCHAR(60),
+    @segundo_apellido NVARCHAR(60) = NULL,
+    @correo NVARCHAR(120),
+    @genero NCHAR(1) = NULL,
+    @fecha_nacimiento DATE = NULL,
+    @telefono NVARCHAR(25),
+    @tipo_telefono NVARCHAR(1),
+    @tipo_cliente_id INT,
+    @nombre_usuario NVARCHAR(50),
+    @contrasena_hash NVARCHAR(255),
+    @empleado_id INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @rol_cliente_id INT = 16;  -- rol Cliente
+    DECLARE @hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @fecha_vencimiento DATE = DATEADD(YEAR, 1, @hoy);
+    DECLARE @persona_id INT;
+    DECLARE @cliente_id INT;
+    DECLARE @credencial_id INT;
+    DECLARE @usuario_id INT;
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF EXISTS (SELECT 1 FROM dbo.persona p WHERE p.correo = @correo)
+        THROW 50001, N'El correo ya está registrado.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.tipocliente tc WHERE tc.id = @tipo_cliente_id)
+        THROW 50002, N'El tipo de cliente no existe.', 1;
+
+    IF @empleado_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM dbo.empleado e WHERE e.id = @empleado_id)
+        THROW 50003, N'El empleado no existe.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.usuario u WHERE u.nombre_usuario = @nombre_usuario)
+        THROW 50004, N'El nombre de usuario ya existe.', 1;
+
+    IF @tipo_telefono NOT IN (N'P', N'L', N'F')
+        THROW 50005, N'El tipo de teléfono no es válido; use P, L o F.', 1;
+
+    IF @genero IS NOT NULL AND @genero NOT IN (N'M', N'F')
+        THROW 50006, N'El género no es válido; use M o F.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.persona (nombre, segundo_nombre, apellido, segundo_apellido, correo, genero, fecha_nacimiento)
+            VALUES (@nombre, @segundo_nombre, @apellido, @segundo_apellido, @correo, @genero, @fecha_nacimiento);
+            SET @persona_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.telefono (numero, persona_id, tipo)
+            VALUES (@telefono, @persona_id, @tipo_telefono);
+
+            INSERT INTO dbo.cliente (fecha_registro, persona_id, tipo_cliente_id)
+            VALUES (@hoy, @persona_id, @tipo_cliente_id);
+            SET @cliente_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.credencial (fecha_registro, fecha_vencimiento, estado, cliente_id, empleado_id)
+            VALUES (@hoy, @fecha_vencimiento, N'ACTIVA', @cliente_id, @empleado_id);
+            SET @credencial_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.usuario (nombre_usuario, contrasena_hash, persona_id, rol_id)
+            VALUES (@nombre_usuario, @contrasena_hash, @persona_id, @rol_cliente_id);
+            SET @usuario_id = SCOPE_IDENTITY();
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @cliente_id AS cliente_id,
+               @persona_id AS persona_id,
+               @credencial_id AS credencial_id,
+               @usuario_id AS usuario_id,
+               @fecha_vencimiento AS fecha_vencimiento;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
 GO
 
 -- >>> DML/001_cargo.sql
