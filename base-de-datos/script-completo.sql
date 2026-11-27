@@ -1346,6 +1346,126 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Leída;
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que el cliente abrió la notificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'fecha_lectura';
 GO
 
+-- >>> DDL/054_auth_user.sql
+CREATE TABLE dbo.auth_user (
+    id NVARCHAR(36) NOT NULL,
+    name NVARCHAR(120) NOT NULL,
+    email NVARCHAR(120) NOT NULL,
+    emailVerified BIT NOT NULL CONSTRAINT DF_auth_user_emailVerified DEFAULT 0,
+    image NVARCHAR(500) NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_user_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_user_updatedAt DEFAULT GETDATE(),
+    usuarioId INT NULL,
+    CONSTRAINT PK_auth_user PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_user_email UNIQUE (email),
+    CONSTRAINT fk_auth_user_usuario FOREIGN KEY (usuarioId) REFERENCES dbo.usuario (id)
+);
+
+GO
+
+CREATE UNIQUE INDEX UX_auth_user_usuarioId ON dbo.auth_user (usuarioId) WHERE usuarioId IS NOT NULL;
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuentas de inicio de sesión de Better Auth. Cada una puede enlazarse con un usuario del sistema.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Nombre que muestra la cuenta.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'name';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Correo con el que se inicia sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'email';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Correo verificado; 0: Sin verificar', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'emailVerified';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Dirección de la foto de perfil.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'image';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'updatedAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Usuario del sistema enlazado; de él se toman el rol y la persona.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'usuarioId';
+GO
+
+-- >>> DDL/055_auth_session.sql
+CREATE TABLE dbo.auth_session (
+    id NVARCHAR(36) NOT NULL,
+    expiresAt DATETIME2(0) NOT NULL,
+    token NVARCHAR(255) NOT NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_session_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_session_updatedAt DEFAULT GETDATE(),
+    ipAddress NVARCHAR(100) NULL,
+    userAgent NVARCHAR(500) NULL,
+    userId NVARCHAR(36) NOT NULL,
+    CONSTRAINT PK_auth_session PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_session_token UNIQUE (token),
+    CONSTRAINT fk_auth_session_user FOREIGN KEY (userId) REFERENCES dbo.auth_user (id) ON DELETE CASCADE
+);
+
+GO
+
+CREATE INDEX IX_auth_session_userId ON dbo.auth_session (userId);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Sesiones abiertas de Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence la sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'expiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de la sesión que guarda la cookie.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'token';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'updatedAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Dirección IP desde la que se inició sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'ipAddress';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Navegador o dispositivo desde el que se inició sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'userAgent';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuenta dueña de la sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'userId';
+GO
+
+-- >>> DDL/056_auth_account.sql
+CREATE TABLE dbo.auth_account (
+    id NVARCHAR(36) NOT NULL,
+    accountId NVARCHAR(255) NOT NULL,
+    providerId NVARCHAR(100) NOT NULL,
+    userId NVARCHAR(36) NOT NULL,
+    accessToken NVARCHAR(MAX) NULL,
+    refreshToken NVARCHAR(MAX) NULL,
+    idToken NVARCHAR(MAX) NULL,
+    accessTokenExpiresAt DATETIME2(0) NULL,
+    refreshTokenExpiresAt DATETIME2(0) NULL,
+    scope NVARCHAR(500) NULL,
+    password NVARCHAR(255) NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_account_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_account_updatedAt DEFAULT GETDATE(),
+    CONSTRAINT PK_auth_account PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_account_providerId_accountId UNIQUE (providerId, accountId),
+    CONSTRAINT fk_auth_account_user FOREIGN KEY (userId) REFERENCES dbo.auth_user (id) ON DELETE CASCADE
+);
+
+GO
+
+CREATE INDEX IX_auth_account_userId ON dbo.auth_account (userId);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Formas de acceso de cada cuenta de Better Auth: correo y contraseña o Google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador de la cuenta en el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accountId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Proveedor de acceso: credential (correo y contraseña) o google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'providerId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuenta de Better Auth a la que pertenece.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'userId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de acceso entregado por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accessToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token para renovar el acceso.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'refreshToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de identidad entregado por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'idToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el token de acceso.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accessTokenExpiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el token de renovación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'refreshTokenExpiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Permisos concedidos por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'scope';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Contraseña cifrada cuando el acceso es por correo.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'password';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'updatedAt';
+GO
+
+-- >>> DDL/057_auth_verification.sql
+CREATE TABLE dbo.auth_verification (
+    id NVARCHAR(36) NOT NULL,
+    identifier NVARCHAR(255) NOT NULL,
+    value NVARCHAR(MAX) NOT NULL,
+    expiresAt DATETIME2(0) NOT NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_verification_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_verification_updatedAt DEFAULT GETDATE(),
+    CONSTRAINT PK_auth_verification PRIMARY KEY (id)
+);
+
+GO
+
+CREATE INDEX IX_auth_verification_identifier ON dbo.auth_verification (identifier);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Códigos temporales de Better Auth: verificación de correo y estado del inicio con Google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'A quién o a qué proceso pertenece el código.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'identifier';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Valor del código o del estado temporal.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'value';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el código.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'expiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'updatedAt';
+GO
+
 -- >>> Vistas/01_vw_clientes_prestamos_vigentes.sql
 CREATE OR ALTER VIEW dbo.vw_clientes_prestamos_vigentes
 AS
