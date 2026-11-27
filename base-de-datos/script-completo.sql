@@ -1327,6 +1327,10 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Leída;
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que el cliente abrió la notificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'fecha_lectura';
 GO
 
+-- >>> DDL/054_better_auth.sql
+
+GO
+
 -- >>> Vistas/01_vw_clientes_prestamos_vigentes.sql
 CREATE OR ALTER VIEW dbo.vw_clientes_prestamos_vigentes
 AS
