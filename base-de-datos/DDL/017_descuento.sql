@@ -7,10 +7,14 @@ CREATE TABLE dbo.descuento (
     fecha_inicio DATE NOT NULL,
     fecha_fin DATE NULL,
     estado SMALLINT NOT NULL CONSTRAINT DF_descuento_estado DEFAULT 1,
+    tipo_cliente_id INT NULL,
+    categoria_id INT NULL,
     CONSTRAINT PK_descuento PRIMARY KEY (id),
     CONSTRAINT CK_descuento_estado CHECK (estado IN (0, 1)),
     CONSTRAINT CK_descuento_valor CHECK (valor >= 0),
-    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO'))
+    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO')),
+    CONSTRAINT fk_descuento_tipocliente FOREIGN KEY (tipo_cliente_id) REFERENCES dbo.tipocliente (id),
+    CONSTRAINT fk_descuento_categoria FOREIGN KEY (categoria_id) REFERENCES dbo.categoria (id)
 );
 
 GO
@@ -24,4 +28,6 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Valor del 
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha desde la que comienza la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_inicio';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha hasta la que se mantiene la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_fin';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Activo; 0: Inactivo', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'estado';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Tipo de cliente al que se limita el descuento. NULL: aplica a cualquier tipo de cliente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'tipo_cliente_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Categoría de libros a la que se limita el descuento. NULL: aplica a cualquier libro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'categoria_id';
 GO

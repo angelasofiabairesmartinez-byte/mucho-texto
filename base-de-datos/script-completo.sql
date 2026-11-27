@@ -393,10 +393,14 @@ CREATE TABLE dbo.descuento (
     fecha_inicio DATE NOT NULL,
     fecha_fin DATE NULL,
     estado SMALLINT NOT NULL CONSTRAINT DF_descuento_estado DEFAULT 1,
+    tipo_cliente_id INT NULL,
+    categoria_id INT NULL,
     CONSTRAINT PK_descuento PRIMARY KEY (id),
     CONSTRAINT CK_descuento_estado CHECK (estado IN (0, 1)),
     CONSTRAINT CK_descuento_valor CHECK (valor >= 0),
-    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO'))
+    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO')),
+    CONSTRAINT fk_descuento_tipocliente FOREIGN KEY (tipo_cliente_id) REFERENCES dbo.tipocliente (id),
+    CONSTRAINT fk_descuento_categoria FOREIGN KEY (categoria_id) REFERENCES dbo.categoria (id)
 );
 
 GO
@@ -410,6 +414,8 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Valor del 
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha desde la que comienza la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_inicio';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha hasta la que se mantiene la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_fin';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Activo; 0: Inactivo', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'estado';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Tipo de cliente al que se limita el descuento. NULL: aplica a cualquier tipo de cliente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'tipo_cliente_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Categoría de libros a la que se limita el descuento. NULL: aplica a cualquier libro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'categoria_id';
 GO
 
 -- >>> DDL/018_editorial.sql
@@ -1109,17 +1115,26 @@ CREATE TABLE dbo.reserva (
     fecha_vencimiento DATETIME2(0) NULL,
     estado NVARCHAR(30) NOT NULL CONSTRAINT DF_reserva_estado DEFAULT N'PENDIENTE',
     fecha_atencion DATETIME2(0) NULL,
+    tipo NVARCHAR(1) NOT NULL CONSTRAINT DF_reserva_tipo DEFAULT N'R',
+    sucursal_id INT NULL,
+    ejemplar_id INT NULL,
+    prestamo_id INT NULL,
     CONSTRAINT PK_reserva PRIMARY KEY (id),
     CONSTRAINT CK_reserva_estado CHECK (estado IN (N'PENDIENTE', N'ATENDIDA', N'VENCIDA', N'CANCELADA')),
+    CONSTRAINT CK_reserva_tipo CHECK (tipo IN (N'R', N'S')),
     CONSTRAINT fk_reserva_cliente FOREIGN KEY (cliente_id) REFERENCES dbo.cliente (id),
-    CONSTRAINT fk_reserva_libro FOREIGN KEY (libro_id) REFERENCES dbo.libro (id)
+    CONSTRAINT fk_reserva_libro FOREIGN KEY (libro_id) REFERENCES dbo.libro (id),
+    CONSTRAINT fk_reserva_sucursal FOREIGN KEY (sucursal_id) REFERENCES dbo.sucursal (id),
+    CONSTRAINT fk_reserva_ejemplar FOREIGN KEY (ejemplar_id) REFERENCES dbo.ejemplar (id),
+    CONSTRAINT fk_reserva_prestamo FOREIGN KEY (prestamo_id) REFERENCES dbo.prestamo (id)
 );
 
 GO
 
 CREATE INDEX IX_reserva_cliente_id ON dbo.reserva (cliente_id);
 CREATE INDEX IX_reserva_libro_id ON dbo.reserva (libro_id);
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Registra las reservas de libros solicitadas por los clientes.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva';
+CREATE INDEX IX_reserva_ejemplar_id ON dbo.reserva (ejemplar_id);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Registra las reservas de libros y las solicitudes de préstamo hechas por los clientes.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador único del registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'id';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador del cliente relacionado con el registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'cliente_id';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador del libro relacionado con el registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'libro_id';
@@ -1127,6 +1142,10 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y ho
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha límite o de vencimiento del registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'fecha_vencimiento';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Estado de la reserva: PENDIENTE, ATENDIDA, VENCIDA o CANCELADA.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'estado';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que se atendió la reserva.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'fecha_atencion';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'R: Reserva; S: Solicitud de préstamo', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'tipo';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Sucursal donde el cliente retirará el libro (solicitudes de préstamo).', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'sucursal_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Ejemplar apartado para el cliente mientras la solicitud está pendiente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'ejemplar_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Préstamo generado cuando la reserva o solicitud fue atendida.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'prestamo_id';
 GO
 
 -- >>> DDL/047_telefono.sql
@@ -2504,22 +2523,22 @@ GO
 -- >>> DML/017_descuento.sql
 -- descuento
 SET IDENTITY_INSERT dbo.descuento ON;
-INSERT INTO dbo.descuento (id, nombre, descripcion, tipo_descuento, valor, fecha_inicio, fecha_fin, estado) VALUES
-  (1, N'Descuento estudiante', N'Para estudiantes con carné vigente.', N'PORCENTAJE', 10.00, '2025-01-10', NULL, 1),
-  (2, N'Cliente frecuente', N'Beneficio por compras recurrentes.', N'PORCENTAJE', 5.00, '2025-01-10', NULL, 1),
-  (3, N'Promoción de temporada', N'Descuento por temporada alta.', N'PORCENTAJE', 15.00, '2025-06-01', NULL, 1),
-  (4, N'Adulto mayor', N'Para clientes de 60 años o más.', N'PORCENTAJE', 20.00, '2025-01-10', NULL, 1),
-  (5, N'Día del libro', N'Celebración del Día del Libro.', N'PORCENTAJE', 25.00, '2025-04-01', NULL, 1),
-  (6, N'Liquidación de inventario', N'Salida de títulos con poca rotación.', N'PORCENTAJE', 30.00, '2025-08-01', NULL, 1),
-  (7, N'Cupón de bienvenida', N'Monto fijo para nuevos clientes.', N'MONTO_FIJO', 50.00, '2025-03-01', NULL, 1),
-  (8, N'Bono lector', N'Monto fijo por lectura del mes.', N'MONTO_FIJO', 25.00, '2025-03-01', NULL, 1),
-  (9, N'Descuento a empleados', N'Beneficio interno del personal.', N'PORCENTAJE', 15.00, '2025-01-10', NULL, 1),
-  (10, N'Compra mayorista', N'Para compras de gran volumen.', N'PORCENTAJE', 12.00, '2025-02-01', NULL, 1),
-  (11, N'Aniversario de la librería', N'Promoción por aniversario.', N'PORCENTAJE', 18.00, '2025-05-05', '2025-05-31', 0),
-  (12, N'Black Friday 2025', N'Promoción de fin de noviembre.', N'PORCENTAJE', 35.00, '2025-11-28', '2025-11-30', 0),
-  (13, N'Fin de año', N'Descuento de temporada navideña.', N'PORCENTAJE', 20.00, '2025-12-01', NULL, 1),
-  (14, N'Regreso a clases', N'Campaña escolar de inicio de año.', N'PORCENTAJE', 10.00, '2025-12-15', NULL, 1),
-  (15, N'Membresía premium', N'Beneficio exclusivo de socios.', N'PORCENTAJE', 8.00, '2025-01-10', NULL, 1);
+INSERT INTO dbo.descuento (id, nombre, descripcion, tipo_descuento, valor, fecha_inicio, fecha_fin, estado, tipo_cliente_id, categoria_id) VALUES
+  (1, N'Descuento estudiante', N'Para estudiantes con carné vigente.', N'PORCENTAJE', 10.00, '2025-01-10', NULL, 1, 1, NULL),
+  (2, N'Cliente frecuente', N'Beneficio por compras recurrentes.', N'PORCENTAJE', 5.00, '2025-01-10', NULL, 1, NULL, NULL),
+  (3, N'Promoción de temporada', N'Descuento por temporada alta.', N'PORCENTAJE', 15.00, '2025-06-01', NULL, 1, NULL, 1),
+  (4, N'Adulto mayor', N'Para clientes de 60 años o más.', N'PORCENTAJE', 20.00, '2025-01-10', NULL, 1, 4, NULL),
+  (5, N'Día del libro', N'Celebración del Día del Libro.', N'PORCENTAJE', 25.00, '2025-04-01', NULL, 1, NULL, NULL),
+  (6, N'Liquidación de inventario', N'Salida de títulos con poca rotación.', N'PORCENTAJE', 30.00, '2025-08-01', NULL, 1, NULL, 4),
+  (7, N'Cupón de bienvenida', N'Monto fijo para nuevos clientes.', N'MONTO_FIJO', 50.00, '2025-03-01', NULL, 1, NULL, NULL),
+  (8, N'Bono lector', N'Monto fijo por lectura del mes.', N'MONTO_FIJO', 25.00, '2025-03-01', NULL, 1, NULL, NULL),
+  (9, N'Descuento a empleados', N'Beneficio interno del personal.', N'PORCENTAJE', 15.00, '2025-01-10', NULL, 1, NULL, NULL),
+  (10, N'Compra mayorista', N'Para compras de gran volumen.', N'PORCENTAJE', 12.00, '2025-02-01', NULL, 1, 8, NULL),
+  (11, N'Aniversario de la librería', N'Promoción por aniversario.', N'PORCENTAJE', 18.00, '2025-05-05', '2025-05-31', 0, NULL, NULL),
+  (12, N'Black Friday 2025', N'Promoción de fin de noviembre.', N'PORCENTAJE', 35.00, '2025-11-28', '2025-11-30', 0, NULL, NULL),
+  (13, N'Fin de año', N'Descuento de temporada navideña.', N'PORCENTAJE', 20.00, '2025-12-01', NULL, 1, NULL, NULL),
+  (14, N'Regreso a clases', N'Campaña escolar de inicio de año.', N'PORCENTAJE', 10.00, '2025-12-15', NULL, 1, NULL, 12),
+  (15, N'Membresía premium', N'Beneficio exclusivo de socios.', N'PORCENTAJE', 8.00, '2025-01-10', NULL, 1, NULL, NULL);
 SET IDENTITY_INSERT dbo.descuento OFF;
 GO
 
