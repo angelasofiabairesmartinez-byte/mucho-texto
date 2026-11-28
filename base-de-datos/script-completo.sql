@@ -1983,6 +1983,38 @@ GO
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Ventas por mes separadas en tienda y en línea.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'VIEW', @level1name = N'vw_ventas_por_canal';
 GO
 
+-- >>> Funciones/fn_calcular_porcentaje_progreso.sql
+/* ============================================================
+   Función: dbo.fn_calcular_porcentaje_progreso
+   Autor: Ángela Baires          Fecha: 2026-11-27
+   Descripción: Calcula qué porcentaje de un recurso digital lleva el
+                cliente: página actual entre total de páginas (texto) o
+                segundo actual entre duración (audiolibro), por 100.
+   Parámetros: @recurso_digital_id (libro digital o audiolibro),
+               @posicion (página o segundo donde va el cliente)
+   Devuelve: DECIMAL(5,2) entre 0 y 100; 0 si el recurso no existe
+             o no tiene total de páginas o duración
+   ============================================================ */
+CREATE OR ALTER FUNCTION dbo.fn_calcular_porcentaje_progreso (@recurso_digital_id INT, @posicion INT)
+RETURNS DECIMAL(5,2)
+AS
+BEGIN
+    DECLARE @total INT;
+
+    SELECT @total = CASE r.tipo WHEN N'T' THEN r.total_paginas ELSE r.duracion_segundos END
+    FROM dbo.recursodigital r
+    WHERE r.id = @recurso_digital_id;
+
+    IF @total IS NULL OR @total <= 0 OR @posicion IS NULL OR @posicion <= 0
+        RETURN 0.00;
+
+    IF @posicion >= @total
+        RETURN 100.00;
+
+    RETURN CAST(@posicion * 100.0 / @total AS DECIMAL(5,2));
+END
+GO
+
 -- >>> Funciones/fn_historial_cliente.sql
 -- Función: historial de un cliente específico
 CREATE OR ALTER FUNCTION dbo.fn_historial_cliente (@cliente_id INT)
@@ -1992,6 +2024,256 @@ RETURN
 (
     SELECT * FROM dbo.vw_historial_cliente WHERE cliente_id = @cliente_id
 );
+GO
+
+-- >>> Procedimientos/sp_guardar_progreso_lectura.sql
+/* ============================================================
+   Procedimiento: dbo.sp_guardar_progreso_lectura
+   Autor: Ángela Baires          Fecha: 2026-11-27
+   Descripción: Guarda dónde va el cliente en un libro digital o
+                audiolibro. Si es la primera vez crea el progreso; si no,
+                lo actualiza. Calcula el porcentaje y el capítulo actual.
+   Parámetros: @cliente_id (quien lee o escucha),
+               @recurso_digital_id (libro digital o audiolibro),
+               @posicion (página o segundo actual)
+   Devuelve: progreso_id, posicion_actual, porcentaje, capitulo_numero,
+             capitulo_titulo (NULL si el recurso no tiene capítulos)
+   Errores: 50001 El cliente no existe, 50002 El recurso digital no
+            existe o fue retirado, 50003 La posición no es válida
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_guardar_progreso_lectura
+    @cliente_id INT,
+    @recurso_digital_id INT,
+    @posicion INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @total INT;
+    DECLARE @porcentaje DECIMAL(5,2);
+    DECLARE @progreso_id INT;
+    DECLARE @capitulo_numero SMALLINT;
+    DECLARE @capitulo_titulo NVARCHAR(150);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.cliente c WHERE c.id = @cliente_id)
+        THROW 50001, N'El cliente no existe.', 1;
+
+    SELECT @total = CASE r.tipo WHEN N'T' THEN r.total_paginas ELSE r.duracion_segundos END
+    FROM dbo.recursodigital r
+    WHERE r.id = @recurso_digital_id AND r.estado = 1;
+
+    IF @@ROWCOUNT = 0
+        THROW 50002, N'El recurso digital no existe o fue retirado.', 1;
+
+    IF @posicion IS NULL OR @posicion < 0 OR (@total IS NOT NULL AND @posicion > @total)
+        THROW 50003, N'La posición no es válida para este recurso.', 1;
+
+    SET @porcentaje = dbo.fn_calcular_porcentaje_progreso(@recurso_digital_id, @posicion);
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            SELECT @progreso_id = pl.id
+            FROM dbo.progresolectura pl WITH (UPDLOCK, HOLDLOCK)
+            WHERE pl.cliente_id = @cliente_id AND pl.recurso_digital_id = @recurso_digital_id;
+
+            IF @progreso_id IS NULL
+            BEGIN
+                INSERT INTO dbo.progresolectura (cliente_id, recurso_digital_id, posicion_actual, porcentaje)
+                VALUES (@cliente_id, @recurso_digital_id, @posicion, @porcentaje);
+                SET @progreso_id = SCOPE_IDENTITY();
+            END
+            ELSE
+                UPDATE dbo.progresolectura
+                SET posicion_actual = @posicion,
+                    porcentaje = @porcentaje,
+                    fecha_ultima_lectura = GETDATE()
+                WHERE id = @progreso_id;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT TOP 1 @capitulo_numero = cr.numero, @capitulo_titulo = cr.titulo
+        FROM dbo.capitulorecurso cr
+        WHERE cr.recurso_digital_id = @recurso_digital_id AND cr.posicion_inicio <= @posicion
+        ORDER BY cr.posicion_inicio DESC;
+
+        SELECT @progreso_id AS progreso_id,
+               @posicion AS posicion_actual,
+               @porcentaje AS porcentaje,
+               @capitulo_numero AS capitulo_numero,
+               @capitulo_titulo AS capitulo_titulo;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_audiolibro.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_audiolibro
+   Autor: Ángela Baires          Fecha: 2026-11-27
+   Descripción: Publica el audiolibro de un libro con sus capítulos.
+                Si el libro tuvo un audiolibro retirado, lo reemplaza y
+                lo vuelve a activar.
+   Parámetros: @libro_id, @ruta_archivo (ruta o URL del MP3),
+               @duracion_segundos, @generado_ia (1: Generado con IA;
+               0: Grabado), @voz_narracion (nombre de la voz; opcional),
+               @capitulos (JSON opcional, ej.
+               '[{"numero":1,"titulo":"Capítulo 1","posicion_inicio":0}]')
+   Devuelve: recurso_digital_id, libro_id, duracion_segundos,
+             capitulos (cantidad registrada)
+   Errores: 50001 El libro no existe, 50002 La duración debe ser mayor
+            que 0, 50003 El libro ya tiene un audiolibro activo,
+            50004 Los capítulos no tienen un formato válido,
+            50005 Un capítulo empieza fuera de la duración del audio,
+            50006 generado_ia debe ser 0 o 1
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_audiolibro
+    @libro_id INT,
+    @ruta_archivo NVARCHAR(300),
+    @duracion_segundos INT,
+    @generado_ia SMALLINT = 1,
+    @voz_narracion NVARCHAR(60) = NULL,
+    @capitulos NVARCHAR(MAX) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @recurso_id INT;
+    DECLARE @estado_actual SMALLINT;
+    DECLARE @lista TABLE (numero SMALLINT, titulo NVARCHAR(150), posicion_inicio INT);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.libro l WHERE l.id = @libro_id)
+        THROW 50001, N'El libro no existe.', 1;
+
+    IF @duracion_segundos IS NULL OR @duracion_segundos <= 0
+        THROW 50002, N'La duración debe ser mayor que 0.', 1;
+
+    SELECT @recurso_id = r.id, @estado_actual = r.estado
+    FROM dbo.recursodigital r
+    WHERE r.libro_id = @libro_id AND r.tipo = N'A';
+
+    IF @estado_actual = 1
+        THROW 50003, N'El libro ya tiene un audiolibro activo; retírelo antes de publicar otro.', 1;
+
+    IF @capitulos IS NOT NULL
+    BEGIN
+        IF ISJSON(@capitulos) = 0
+            THROW 50004, N'Los capítulos no tienen un formato válido.', 1;
+
+        INSERT INTO @lista (numero, titulo, posicion_inicio)
+        SELECT j.numero, j.titulo, j.posicion_inicio
+        FROM OPENJSON(@capitulos)
+            WITH (numero SMALLINT, titulo NVARCHAR(150), posicion_inicio INT) j;
+
+        IF EXISTS (SELECT 1 FROM @lista c WHERE c.numero IS NULL OR c.titulo IS NULL OR c.posicion_inicio IS NULL)
+           OR EXISTS (SELECT c.numero FROM @lista c GROUP BY c.numero HAVING COUNT(*) > 1)
+            THROW 50004, N'Los capítulos no tienen un formato válido.', 1;
+
+        IF EXISTS (SELECT 1 FROM @lista c WHERE c.posicion_inicio < 0 OR c.posicion_inicio >= @duracion_segundos)
+            THROW 50005, N'Un capítulo empieza fuera de la duración del audio.', 1;
+    END
+
+    IF @generado_ia IS NULL OR @generado_ia NOT IN (0, 1)
+        THROW 50006, N'generado_ia debe ser 0 o 1.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            IF @recurso_id IS NULL
+            BEGIN
+                INSERT INTO dbo.recursodigital (libro_id, tipo, ruta_archivo, total_paginas, duracion_segundos, generado_ia, voz_narracion)
+                VALUES (@libro_id, N'A', @ruta_archivo, NULL, @duracion_segundos, @generado_ia, @voz_narracion);
+                SET @recurso_id = SCOPE_IDENTITY();
+            END
+            ELSE
+            BEGIN
+                UPDATE dbo.recursodigital
+                SET ruta_archivo = @ruta_archivo,
+                    duracion_segundos = @duracion_segundos,
+                    generado_ia = @generado_ia,
+                    voz_narracion = @voz_narracion,
+                    fecha_publicacion = GETDATE(),
+                    estado = 1
+                WHERE id = @recurso_id;
+
+                DELETE FROM dbo.capitulorecurso WHERE recurso_digital_id = @recurso_id;
+            END
+
+            INSERT INTO dbo.capitulorecurso (recurso_digital_id, numero, titulo, posicion_inicio)
+            SELECT @recurso_id, c.numero, c.titulo, c.posicion_inicio
+            FROM @lista c;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @recurso_id AS recurso_digital_id,
+               @libro_id AS libro_id,
+               @duracion_segundos AS duracion_segundos,
+               (SELECT COUNT(*) FROM @lista) AS capitulos;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_retirar_recurso_digital.sql
+/* ============================================================
+   Procedimiento: dbo.sp_retirar_recurso_digital
+   Autor: Ángela Baires          Fecha: 2026-11-27
+   Descripción: Retira del catálogo un libro digital o audiolibro
+                (estado 0). No borra nada: el progreso, las notas y los
+                capítulos se conservan por si se vuelve a publicar.
+   Parámetros: @recurso_digital_id
+   Devuelve: recurso_digital_id, libro_id, tipo (T: Texto; A: Audio),
+             lectores_afectados (clientes que tenían progreso)
+   Errores: 50001 El recurso digital no existe, 50002 El recurso
+            digital ya estaba retirado
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_retirar_recurso_digital
+    @recurso_digital_id INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @estado SMALLINT;
+
+    -- 1. Validaciones (antes de escribir nada)
+    SELECT @estado = r.estado FROM dbo.recursodigital r WHERE r.id = @recurso_digital_id;
+
+    IF @estado IS NULL
+        THROW 50001, N'El recurso digital no existe.', 1;
+
+    IF @estado = 0
+        THROW 50002, N'El recurso digital ya estaba retirado.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            UPDATE dbo.recursodigital SET estado = 0 WHERE id = @recurso_digital_id;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT r.id AS recurso_digital_id,
+               r.libro_id,
+               r.tipo,
+               (SELECT COUNT(*) FROM dbo.progresolectura pl WHERE pl.recurso_digital_id = r.id) AS lectores_afectados
+        FROM dbo.recursodigital r
+        WHERE r.id = @recurso_digital_id;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
 GO
 
 -- >>> DML/001_cargo.sql
