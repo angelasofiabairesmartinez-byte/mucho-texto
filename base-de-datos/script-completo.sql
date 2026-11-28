@@ -2281,6 +2281,71 @@ BEGIN
 END
 GO
 
+-- >>> Procedimientos/sp_crear_reserva.sql
+/* ============================================================
+   Procedimiento: dbo.sp_crear_reserva
+   Autor: Ángel Fabricio          Fecha: 2026-11-27
+   Descripción: Crea una reserva PENDIENTE (tipo R) de un libro sin
+                ejemplares disponibles para un cliente que puede prestar.
+   Parámetros: @cliente_id, @libro_id
+   Devuelve: reserva_id, estado (siempre PENDIENTE al crearla)
+   Errores: 50001 El cliente no existe, 50002 El libro no existe,
+            50003 El libro tiene ejemplares disponibles; no se puede
+            reservar, 50004 El cliente ya tiene una reserva pendiente de
+            este libro, 50005 El cliente no puede reservar porque no
+            cumple las condiciones para préstamo
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_crear_reserva
+    @cliente_id INT,
+    @libro_id INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @estado_disponible INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Disponible');
+    DECLARE @reserva_id INT;
+    DECLARE @estado NVARCHAR(30);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.cliente c WHERE c.id = @cliente_id)
+        THROW 50001, N'El cliente no existe.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.libro l WHERE l.id = @libro_id)
+        THROW 50002, N'El libro no existe.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.ejemplar e
+               WHERE e.libro_id = @libro_id AND e.estado_ejemplar_id = @estado_disponible)
+        THROW 50003, N'El libro tiene ejemplares disponibles; no se puede reservar.', 1;
+
+    IF EXISTS (SELECT 1 FROM dbo.reserva r
+               WHERE r.cliente_id = @cliente_id AND r.libro_id = @libro_id AND r.estado = N'PENDIENTE')
+        THROW 50004, N'El cliente ya tiene una reserva pendiente de este libro.', 1;
+
+    IF dbo.fn_puede_prestar(@cliente_id) = 0
+        THROW 50005, N'El cliente no puede reservar porque no cumple las condiciones para préstamo.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.reserva (cliente_id, libro_id)
+            VALUES (@cliente_id, @libro_id);
+            SET @reserva_id = SCOPE_IDENTITY();
+
+            SELECT @estado = r.estado FROM dbo.reserva r WHERE r.id = @reserva_id;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @reserva_id AS reserva_id,
+               @estado AS estado;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
 -- >>> Procedimientos/sp_guardar_progreso_lectura.sql
 /* ============================================================
    Procedimiento: dbo.sp_guardar_progreso_lectura
@@ -2574,6 +2639,635 @@ BEGIN
                @credencial_id AS credencial_id,
                @usuario_id AS usuario_id,
                @fecha_vencimiento AS fecha_vencimiento;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_compra_proveedor.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_compra_proveedor
+   Autor: Ángel Fabricio          Fecha: 2026-11-27
+   Descripción: Registra una compra a un proveedor en una transacción:
+                compra, detalle, existencias de la sucursal (suma al
+                inventario) y movimiento ENTRADA por cada libro.
+   Parámetros: @proveedor_id, @empleado_id, @sucursal_id,
+               @numero_factura (opcional), @detalle (JSON, ej.
+               '[{"libro_id":3,"cantidad":10,"costo_unitario":120.00}]')
+   Devuelve: compra_proveedor_id, total
+   Errores: 50001 El proveedor no existe, 50002 El empleado no existe,
+            50003 La sucursal no existe, 50004 Debe indicar al menos un
+            libro, 50005 Uno de los libros no existe, 50006 La cantidad
+            y el costo deben ser mayores a cero
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_compra_proveedor
+    @proveedor_id INT,
+    @empleado_id INT,
+    @sucursal_id INT,
+    @numero_factura NVARCHAR(40) = NULL,
+    @detalle NVARCHAR(MAX)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @compra_id INT;
+    DECLARE @total DECIMAL(10,2);
+    DECLARE @lineas TABLE (libro_id INT NULL, cantidad INT NULL, costo_unitario DECIMAL(10,2) NULL);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.proveedor p WHERE p.id = @proveedor_id)
+        THROW 50001, N'El proveedor no existe.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.empleado e WHERE e.id = @empleado_id)
+        THROW 50002, N'El empleado no existe.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.sucursal s WHERE s.id = @sucursal_id)
+        THROW 50003, N'La sucursal no existe.', 1;
+
+    IF @detalle IS NULL OR ISJSON(@detalle) = 0
+        THROW 50004, N'Debe indicar al menos un libro.', 1;
+
+    INSERT INTO @lineas (libro_id, cantidad, costo_unitario)
+    SELECT j.libro_id, j.cantidad, j.costo_unitario
+    FROM OPENJSON(@detalle)
+         WITH (libro_id INT '$.libro_id',
+               cantidad INT '$.cantidad',
+               costo_unitario DECIMAL(10,2) '$.costo_unitario') j;
+
+    IF NOT EXISTS (SELECT 1 FROM @lineas)
+        THROW 50004, N'Debe indicar al menos un libro.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l
+               WHERE l.libro_id IS NULL
+                  OR NOT EXISTS (SELECT 1 FROM dbo.libro b WHERE b.id = l.libro_id))
+        THROW 50005, N'Uno de los libros no existe.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l
+               WHERE l.cantidad IS NULL OR l.cantidad <= 0
+                  OR l.costo_unitario IS NULL OR l.costo_unitario <= 0)
+        THROW 50006, N'La cantidad y el costo deben ser mayores a cero.', 1;
+
+    SELECT @total = SUM(l.cantidad * l.costo_unitario) FROM @lineas l;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.compraproveedor (fecha_compra, numero_factura, proveedor_id, empleado_id)
+            VALUES (@hoy, @numero_factura, @proveedor_id, @empleado_id);
+            SET @compra_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.detallecompra (compra_proveedor_id, libro_id, cantidad, costo_unitario)
+            SELECT @compra_id, l.libro_id, l.cantidad, l.costo_unitario
+            FROM @lineas l;
+
+            -- Inventario: suma a la fila existente o crea la del libro en la sucursal
+            UPDATE i
+            SET cantidad_disponible = i.cantidad_disponible + t.cantidad
+            FROM dbo.inventariosucursal i
+            INNER JOIN (SELECT libro_id, SUM(cantidad) AS cantidad FROM @lineas GROUP BY libro_id) t
+                    ON t.libro_id = i.libro_id
+            WHERE i.sucursal_id = @sucursal_id;
+
+            INSERT INTO dbo.inventariosucursal (sucursal_id, libro_id, cantidad_disponible)
+            SELECT @sucursal_id, t.libro_id, t.cantidad
+            FROM (SELECT libro_id, SUM(cantidad) AS cantidad FROM @lineas GROUP BY libro_id) t
+            WHERE NOT EXISTS (SELECT 1 FROM dbo.inventariosucursal i
+                              WHERE i.sucursal_id = @sucursal_id AND i.libro_id = t.libro_id);
+
+            INSERT INTO dbo.movimientoinventario (sucursal_id, ejemplar_id, empleado_id, tipo_movimiento, cantidad, observacion)
+            SELECT @sucursal_id, NULL, @empleado_id, N'ENTRADA', t.cantidad,
+                   CONCAT(N'Compra a proveedor ', @compra_id, N', libro ', t.libro_id)
+            FROM (SELECT libro_id, SUM(cantidad) AS cantidad FROM @lineas GROUP BY libro_id) t;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @compra_id AS compra_proveedor_id,
+               @total AS total;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_devolucion.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_devolucion
+   Autor: Ángel Fabricio          Fecha: 2026-11-27
+   Descripción: Registra la devolución de uno o varios ejemplares en una
+                transacción: devolución y detalle, multa automática por
+                atraso (fn_calcular_multa), estado del ejemplar, estado del
+                préstamo (Devuelto o Parcialmente devuelto), historial y
+                reserva en espera (el ejemplar queda apartado para la
+                reserva pendiente más antigua de ese libro).
+   Parámetros: @empleado_id, @ejemplares (JSON, ej.
+               '[{"ejemplar_id":5,"condicion_entrega":"Buen estado"}]'),
+               @observacion (opcional)
+   Devuelve: devolucion_id, multa_total (0 si no hubo atraso)
+   Errores: 50001 El empleado no existe, 50002 Debe indicar al menos un
+            ejemplar, 50003 Uno de los ejemplares no tiene un préstamo
+            pendiente de devolución
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_devolucion
+    @empleado_id INT,
+    @ejemplares NVARCHAR(MAX),
+    @observacion NVARCHAR(200) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @ahora DATETIME2(0) = CAST(GETDATE() AS DATETIME2(0));
+    DECLARE @estado_disponible INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Disponible');
+    DECLARE @estado_reservado INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Reservado');
+    DECLARE @estado_danado INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Dañado');
+    DECLARE @estado_devuelto INT = 2;   -- Devuelto
+    DECLARE @estado_parcial INT = 12;   -- Parcialmente devuelto
+    DECLARE @devolucion_id INT;
+    DECLARE @multa_total DECIMAL(10,2);
+
+    DECLARE @items TABLE (
+        ejemplar_id INT PRIMARY KEY,
+        condicion_entrega NVARCHAR(40) NOT NULL,
+        detalle_prestamo_id INT NULL,
+        prestamo_id INT NULL,
+        multa DECIMAL(10,2) NOT NULL DEFAULT 0,
+        estado_nuevo INT NULL
+    );
+    DECLARE @prestamos TABLE (prestamo_id INT PRIMARY KEY, estado_anterior INT, estado_nuevo INT);
+    DECLARE @reservados TABLE (ejemplar_id INT);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.empleado e WHERE e.id = @empleado_id)
+        THROW 50001, N'El empleado no existe.', 1;
+
+    IF @ejemplares IS NULL OR ISJSON(@ejemplares) = 0
+        THROW 50002, N'Debe indicar al menos un ejemplar.', 1;
+
+    INSERT INTO @items (ejemplar_id, condicion_entrega)
+    SELECT j.ejemplar_id,
+           MAX(ISNULL(NULLIF(LTRIM(RTRIM(j.condicion_entrega)), N''), N'Buen estado'))
+    FROM OPENJSON(@ejemplares)
+         WITH (ejemplar_id INT '$.ejemplar_id',
+               condicion_entrega NVARCHAR(40) '$.condicion_entrega') j
+    WHERE j.ejemplar_id IS NOT NULL
+    GROUP BY j.ejemplar_id;
+
+    IF NOT EXISTS (SELECT 1 FROM @items)
+        THROW 50002, N'Debe indicar al menos un ejemplar.', 1;
+
+    -- Préstamo abierto de cada ejemplar: el último detalle sin devolución
+    -- (estados 1 Activo, 3, 4 Renovado, 8 En mora, 11, 12 y 14)
+    UPDATE it
+    SET detalle_prestamo_id = x.id,
+        prestamo_id = x.prestamo_id
+    FROM @items it
+    CROSS APPLY (SELECT TOP 1 d.id, d.prestamo_id
+                 FROM dbo.detalleprestamo d
+                 INNER JOIN dbo.prestamo p ON p.id = d.prestamo_id
+                 WHERE d.ejemplar_id = it.ejemplar_id
+                   AND p.estado_prestamo_id IN (1, 3, 4, 8, 11, 12, 14)
+                   AND NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd
+                                   WHERE dd.detalle_prestamo_id = d.id)
+                 ORDER BY d.id DESC) x;
+
+    IF EXISTS (SELECT 1 FROM @items WHERE detalle_prestamo_id IS NULL)
+        THROW 50003, N'Uno de los ejemplares no tiene un préstamo pendiente de devolución.', 1;
+
+    UPDATE @items
+    SET multa = dbo.fn_calcular_multa(detalle_prestamo_id, @hoy),
+        estado_nuevo = CASE WHEN condicion_entrega LIKE N'%dañ%'
+                            THEN @estado_danado ELSE @estado_disponible END;
+
+    SELECT @multa_total = ISNULL(SUM(multa), 0) FROM @items;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.devolucion (fecha_devolucion, observacion, empleado_id)
+            VALUES (@ahora, @observacion, @empleado_id);
+            SET @devolucion_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.detalledevolucion (devolucion_id, detalle_prestamo_id, condicion_entrega)
+            SELECT @devolucion_id, it.detalle_prestamo_id, it.condicion_entrega
+            FROM @items it;
+
+            -- Multa automática por atraso
+            INSERT INTO dbo.multa (fecha_generacion, monto, motivo, detalle_prestamo_id)
+            SELECT @hoy, it.multa, N'Atraso en la devolución', it.detalle_prestamo_id
+            FROM @items it
+            WHERE it.multa > 0;
+
+            -- Estado del ejemplar
+            UPDATE e
+            SET estado_ejemplar_id = it.estado_nuevo
+            FROM dbo.ejemplar e
+            INNER JOIN @items it ON it.ejemplar_id = e.id;
+
+            -- Reserva en espera: el ejemplar disponible se aparta para la
+            -- reserva pendiente más antigua de su libro
+            ;WITH ej AS (
+                SELECT it.ejemplar_id, e.libro_id,
+                       ROW_NUMBER() OVER (PARTITION BY e.libro_id ORDER BY it.ejemplar_id) AS rn
+                FROM @items it
+                INNER JOIN dbo.ejemplar e ON e.id = it.ejemplar_id
+                WHERE it.estado_nuevo = @estado_disponible
+            ),
+            rs AS (
+                SELECT r.id, r.libro_id,
+                       ROW_NUMBER() OVER (PARTITION BY r.libro_id ORDER BY r.fecha_reserva, r.id) AS rn
+                FROM dbo.reserva r
+                WHERE r.estado = N'PENDIENTE' AND r.tipo = N'R' AND r.ejemplar_id IS NULL
+            )
+            UPDATE r
+            SET r.ejemplar_id = ej.ejemplar_id
+            OUTPUT inserted.ejemplar_id INTO @reservados (ejemplar_id)
+            FROM dbo.reserva r
+            INNER JOIN rs ON rs.id = r.id
+            INNER JOIN ej ON ej.libro_id = rs.libro_id AND ej.rn = rs.rn;
+
+            UPDATE dbo.ejemplar
+            SET estado_ejemplar_id = @estado_reservado
+            WHERE id IN (SELECT ejemplar_id FROM @reservados);
+
+            -- Estado del préstamo: Devuelto si ya no le quedan ejemplares
+            INSERT INTO @prestamos (prestamo_id, estado_anterior, estado_nuevo)
+            SELECT DISTINCT it.prestamo_id, p.estado_prestamo_id,
+                   CASE WHEN NOT EXISTS (SELECT 1
+                                         FROM dbo.detalleprestamo d
+                                         WHERE d.prestamo_id = it.prestamo_id
+                                           AND NOT EXISTS (SELECT 1 FROM dbo.detalledevolucion dd
+                                                           WHERE dd.detalle_prestamo_id = d.id))
+                        THEN @estado_devuelto ELSE @estado_parcial END
+            FROM @items it
+            INNER JOIN dbo.prestamo p ON p.id = it.prestamo_id;
+
+            UPDATE p
+            SET estado_prestamo_id = pr.estado_nuevo
+            FROM dbo.prestamo p
+            INNER JOIN @prestamos pr ON pr.prestamo_id = p.id;
+
+            INSERT INTO dbo.historialprestamo (prestamo_id, empleado_id, estado_anterior, estado_nuevo, observacion)
+            SELECT pr.prestamo_id, @empleado_id, ea.nombre, en.nombre, N'Devolución registrada'
+            FROM @prestamos pr
+            INNER JOIN dbo.estadoprestamo ea ON ea.id = pr.estado_anterior
+            INNER JOIN dbo.estadoprestamo en ON en.id = pr.estado_nuevo;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @devolucion_id AS devolucion_id,
+               @multa_total AS multa_total;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_prestamo.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_prestamo
+   Autor: Ángel Fabricio          Fecha: 2026-11-27
+   Descripción: Registra un préstamo de uno o varios ejemplares en una
+                transacción: préstamo Activo a 15 días, detalle, ejemplares
+                en estado Prestado e historial.
+   Parámetros: @cliente_id, @empleado_id, @ejemplares (JSON con ids de
+               ejemplar, ej. '[5,12]'), @observacion (opcional)
+   Devuelve: prestamo_id, fecha_vencimiento
+   Errores: 50001 El cliente no existe, 50002 La credencial no está activa
+            o está vencida, 50003 El cliente tiene multas pendientes,
+            50004 El cliente alcanzó su límite de préstamos, 50005 Uno de
+            los ejemplares no está disponible, 50006 El empleado no existe,
+            50007 Debe indicar al menos un ejemplar (JSON válido)
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_prestamo
+    @cliente_id INT,
+    @empleado_id INT,
+    @ejemplares NVARCHAR(MAX),
+    @observacion NVARCHAR(200) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @dias_prestamo INT = 15;
+    DECLARE @fecha_vencimiento DATE = DATEADD(DAY, @dias_prestamo, @hoy);
+    DECLARE @estado_prestamo_activo INT = 1;  -- Activo
+    DECLARE @estado_disponible INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Disponible');
+    DECLARE @estado_prestado INT = (SELECT id FROM dbo.estadoejemplar WHERE nombre = N'Prestado');
+    DECLARE @nombre_estado NVARCHAR(30) = (SELECT nombre FROM dbo.estadoprestamo WHERE id = @estado_prestamo_activo);
+    DECLARE @prestamo_id INT;
+    DECLARE @total INT;
+    DECLARE @ids TABLE (ejemplar_id INT PRIMARY KEY);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.cliente c WHERE c.id = @cliente_id)
+        THROW 50001, N'El cliente no existe.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.empleado e WHERE e.id = @empleado_id)
+        THROW 50006, N'El empleado no existe.', 1;
+
+    IF @ejemplares IS NULL OR ISJSON(@ejemplares) = 0
+        THROW 50007, N'Debe indicar al menos un ejemplar (JSON válido, ej. [5,12]).', 1;
+
+    INSERT INTO @ids (ejemplar_id)
+    SELECT DISTINCT TRY_CAST(j.value AS INT)
+    FROM OPENJSON(@ejemplares) j
+    WHERE TRY_CAST(j.value AS INT) IS NOT NULL;
+
+    SELECT @total = COUNT(*) FROM @ids;
+    IF @total = 0
+        THROW 50007, N'Debe indicar al menos un ejemplar (JSON válido, ej. [5,12]).', 1;
+
+    IF NOT EXISTS (SELECT 1
+                   FROM dbo.credencial cr
+                   WHERE cr.cliente_id = @cliente_id
+                     AND cr.estado = N'ACTIVA'
+                     AND cr.fecha_vencimiento >= @hoy)
+        THROW 50002, N'La credencial no está activa o está vencida.', 1;
+
+    IF EXISTS (SELECT 1
+               FROM dbo.multa m
+               INNER JOIN dbo.detalleprestamo d ON d.id = m.detalle_prestamo_id
+               INNER JOIN dbo.prestamo p ON p.id = d.prestamo_id
+               WHERE p.cliente_id = @cliente_id
+                 AND m.estado = N'PENDIENTE')
+        THROW 50003, N'El cliente tiene multas pendientes.', 1;
+
+    IF dbo.fn_prestamos_activos_cliente(@cliente_id) >=
+       (SELECT tc.limite_prestamos
+        FROM dbo.cliente c
+        INNER JOIN dbo.tipocliente tc ON tc.id = c.tipo_cliente_id
+        WHERE c.id = @cliente_id)
+        THROW 50004, N'El cliente alcanzó su límite de préstamos.', 1;
+
+    IF EXISTS (SELECT 1
+               FROM @ids i
+               WHERE NOT EXISTS (SELECT 1
+                                 FROM dbo.ejemplar e
+                                 WHERE e.id = i.ejemplar_id
+                                   AND e.estado_ejemplar_id = @estado_disponible))
+        THROW 50005, N'Uno de los ejemplares no está disponible.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.prestamo (fecha_prestamo, fecha_vencimiento, observacion, cliente_id, empleado_id, estado_prestamo_id)
+            VALUES (@hoy, @fecha_vencimiento, @observacion, @cliente_id, @empleado_id, @estado_prestamo_activo);
+            SET @prestamo_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.detalleprestamo (prestamo_id, ejemplar_id)
+            SELECT @prestamo_id, i.ejemplar_id FROM @ids i;
+
+            -- Solo pasan a Prestado los que siguen disponibles (evita choques entre dos cajas)
+            UPDATE dbo.ejemplar
+            SET estado_ejemplar_id = @estado_prestado
+            WHERE id IN (SELECT i.ejemplar_id FROM @ids i)
+              AND estado_ejemplar_id = @estado_disponible;
+
+            IF @@ROWCOUNT <> @total
+                THROW 50005, N'Uno de los ejemplares no está disponible.', 1;
+
+            INSERT INTO dbo.historialprestamo (prestamo_id, empleado_id, estado_anterior, estado_nuevo, observacion)
+            VALUES (@prestamo_id, @empleado_id, NULL, @nombre_estado, N'Préstamo registrado');
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @prestamo_id AS prestamo_id,
+               @fecha_vencimiento AS fecha_vencimiento;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>> Procedimientos/sp_registrar_venta.sql
+/* ============================================================
+   Procedimiento: dbo.sp_registrar_venta
+   Autor: Ángel Fabricio          Fecha: 2026-11-27
+   Descripción: Registra una venta en una transacción: factura, detalle
+                (precio, descuento e impuesto por línea), formas de pago
+                e inventario de la sucursal (descuenta existencias y
+                registra el movimiento SALIDA).
+   Parámetros: @empleado_id, @sucursal_id, @cliente_id (opcional),
+               @detalle (JSON, ej. '[{"libro_id":3,"cantidad":2,
+               "descuento_id":null,"impuesto_id":1}]'),
+               @pagos (JSON, ej. '[{"forma_pago_id":1,"monto":250.00,
+               "referencia":null}]'), @canal (T: tienda; L: en línea;
+               por defecto T)
+   Devuelve: factura_id, subtotal, descuento_total, impuesto_total, total
+   Errores: 50001 El empleado no existe, 50002 La sucursal no existe,
+            50003 El cliente no existe, 50004 Debe indicar al menos un
+            libro y una forma de pago, 50005 Uno de los libros no existe,
+            50006 No hay existencias suficientes en la sucursal, 50007 La
+            suma de los pagos no coincide con el total, 50008 El descuento
+            no existe, no está activo o no está vigente, 50009 El impuesto
+            no existe o no está vigente, 50010 La forma de pago no existe,
+            50011 La cantidad de cada libro debe ser mayor a cero,
+            50012 El canal no es válido, 50013 Una forma de pago no puede
+            repetirse, 50014 Uno de los libros no tiene precio de venta,
+            50015 El monto de cada pago debe ser mayor a cero
+   ============================================================ */
+CREATE OR ALTER PROCEDURE dbo.sp_registrar_venta
+    @empleado_id INT,
+    @sucursal_id INT,
+    @cliente_id INT = NULL,
+    @detalle NVARCHAR(MAX),
+    @pagos NVARCHAR(MAX),
+    @canal NVARCHAR(1) = N'T'
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @ahora DATETIME2(0) = CAST(GETDATE() AS DATETIME2(0));
+    DECLARE @factura_id INT;
+    DECLARE @subtotal DECIMAL(10,2);
+    DECLARE @descuento_total DECIMAL(10,2);
+    DECLARE @impuesto_total DECIMAL(10,2);
+    DECLARE @total DECIMAL(10,2);
+    DECLARE @suma_pagos DECIMAL(10,2);
+    DECLARE @filas INT;
+
+    DECLARE @lineas TABLE (
+        linea INT IDENTITY(1,1) PRIMARY KEY,
+        libro_id INT NULL,
+        cantidad INT NULL,
+        descuento_id INT NULL,
+        impuesto_id INT NULL,
+        precio_unitario DECIMAL(10,2) NULL,
+        descuento DECIMAL(10,2) NOT NULL DEFAULT 0,
+        monto_impuesto DECIMAL(10,2) NOT NULL DEFAULT 0
+    );
+    DECLARE @pagos_t TABLE (forma_pago_id INT NULL, monto DECIMAL(10,2) NULL, referencia NVARCHAR(80) NULL);
+
+    -- 1. Validaciones (antes de escribir nada)
+    IF NOT EXISTS (SELECT 1 FROM dbo.empleado e WHERE e.id = @empleado_id)
+        THROW 50001, N'El empleado no existe.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.sucursal s WHERE s.id = @sucursal_id)
+        THROW 50002, N'La sucursal no existe.', 1;
+
+    IF @cliente_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM dbo.cliente c WHERE c.id = @cliente_id)
+        THROW 50003, N'El cliente no existe.', 1;
+
+    IF @canal IS NULL OR @canal NOT IN (N'T', N'L')
+        THROW 50012, N'El canal no es válido; use T o L.', 1;
+
+    IF @detalle IS NULL OR ISJSON(@detalle) = 0 OR @pagos IS NULL OR ISJSON(@pagos) = 0
+        THROW 50004, N'Debe indicar al menos un libro y una forma de pago.', 1;
+
+    INSERT INTO @lineas (libro_id, cantidad, descuento_id, impuesto_id)
+    SELECT j.libro_id, j.cantidad, j.descuento_id, j.impuesto_id
+    FROM OPENJSON(@detalle)
+         WITH (libro_id INT '$.libro_id',
+               cantidad INT '$.cantidad',
+               descuento_id INT '$.descuento_id',
+               impuesto_id INT '$.impuesto_id') j;
+
+    INSERT INTO @pagos_t (forma_pago_id, monto, referencia)
+    SELECT j.forma_pago_id, j.monto, j.referencia
+    FROM OPENJSON(@pagos)
+         WITH (forma_pago_id INT '$.forma_pago_id',
+               monto DECIMAL(10,2) '$.monto',
+               referencia NVARCHAR(80) '$.referencia') j;
+
+    IF NOT EXISTS (SELECT 1 FROM @lineas) OR NOT EXISTS (SELECT 1 FROM @pagos_t)
+        THROW 50004, N'Debe indicar al menos un libro y una forma de pago.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l WHERE l.cantidad IS NULL OR l.cantidad <= 0)
+        THROW 50011, N'La cantidad de cada libro debe ser mayor a cero.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l
+               WHERE l.libro_id IS NULL
+                  OR NOT EXISTS (SELECT 1 FROM dbo.libro b WHERE b.id = l.libro_id))
+        THROW 50005, N'Uno de los libros no existe.', 1;
+
+    UPDATE l
+    SET precio_unitario = b.precio_venta
+    FROM @lineas l
+    INNER JOIN dbo.libro b ON b.id = l.libro_id;
+
+    IF EXISTS (SELECT 1 FROM @lineas l WHERE l.precio_unitario IS NULL)
+        THROW 50014, N'Uno de los libros no tiene precio de venta.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l
+               WHERE l.descuento_id IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM dbo.descuento d
+                                 WHERE d.id = l.descuento_id
+                                   AND d.estado = 1
+                                   AND d.fecha_inicio <= @hoy
+                                   AND (d.fecha_fin IS NULL OR d.fecha_fin >= @hoy)))
+        THROW 50008, N'El descuento no existe, no está activo o no está vigente.', 1;
+
+    IF EXISTS (SELECT 1 FROM @lineas l
+               WHERE l.impuesto_id IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM dbo.impuesto i
+                                 WHERE i.id = l.impuesto_id
+                                   AND i.estado = 1
+                                   AND i.fecha_inicio <= @hoy
+                                   AND (i.fecha_fin IS NULL OR i.fecha_fin >= @hoy)))
+        THROW 50009, N'El impuesto no existe o no está vigente.', 1;
+
+    IF EXISTS (SELECT 1
+               FROM (SELECT libro_id, SUM(cantidad) AS pedido FROM @lineas GROUP BY libro_id) t
+               WHERE ISNULL((SELECT i.cantidad_disponible
+                             FROM dbo.inventariosucursal i
+                             WHERE i.sucursal_id = @sucursal_id AND i.libro_id = t.libro_id), 0) < t.pedido)
+        THROW 50006, N'No hay existencias suficientes en la sucursal.', 1;
+
+    IF EXISTS (SELECT 1 FROM @pagos_t p
+               WHERE p.forma_pago_id IS NULL
+                  OR NOT EXISTS (SELECT 1 FROM dbo.formapago f WHERE f.id = p.forma_pago_id))
+        THROW 50010, N'La forma de pago no existe.', 1;
+
+    IF EXISTS (SELECT 1 FROM @pagos_t p WHERE p.monto IS NULL OR p.monto <= 0)
+        THROW 50015, N'El monto de cada pago debe ser mayor a cero.', 1;
+
+    IF EXISTS (SELECT 1 FROM @pagos_t GROUP BY forma_pago_id HAVING COUNT(*) > 1)
+        THROW 50013, N'Una forma de pago no puede repetirse.', 1;
+
+    -- Descuento por línea: PORCENTAJE o MONTO_FIJO por unidad, sin pasar del precio
+    UPDATE l
+    SET descuento = CAST(CASE WHEN x.du > l.precio_unitario THEN l.precio_unitario ELSE x.du END
+                         * l.cantidad AS DECIMAL(10,2))
+    FROM @lineas l
+    INNER JOIN dbo.descuento d ON d.id = l.descuento_id
+    CROSS APPLY (SELECT CASE WHEN d.tipo_descuento = N'PORCENTAJE'
+                             THEN ROUND(l.precio_unitario * d.valor / 100.0, 2)
+                             ELSE d.valor END AS du) x;
+
+    -- Impuesto por línea sobre (precio x cantidad - descuento)
+    UPDATE l
+    SET monto_impuesto = CAST(ROUND((l.precio_unitario * l.cantidad - l.descuento) * i.porcentaje / 100.0, 2)
+                              AS DECIMAL(10,2))
+    FROM @lineas l
+    INNER JOIN dbo.impuesto i ON i.id = l.impuesto_id;
+
+    SELECT @subtotal = SUM(precio_unitario * cantidad),
+           @descuento_total = SUM(descuento),
+           @impuesto_total = SUM(monto_impuesto)
+    FROM @lineas;
+
+    SET @total = @subtotal - @descuento_total + @impuesto_total;
+
+    SELECT @suma_pagos = SUM(monto) FROM @pagos_t;
+    IF @suma_pagos <> @total
+        THROW 50007, N'La suma de los pagos no coincide con el total.', 1;
+
+    -- 2. Escritura dentro de una transacción
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            INSERT INTO dbo.factura (fecha, cliente_id, empleado_id, canal)
+            VALUES (@ahora, @cliente_id, @empleado_id, @canal);
+            SET @factura_id = SCOPE_IDENTITY();
+
+            INSERT INTO dbo.detallefactura (factura_id, libro_id, cantidad, precio_unitario, descuento, descuento_id, impuesto_id, monto_impuesto)
+            SELECT @factura_id, l.libro_id, l.cantidad, l.precio_unitario, l.descuento, l.descuento_id, l.impuesto_id, l.monto_impuesto
+            FROM @lineas l;
+
+            INSERT INTO dbo.facturaformapago (factura_id, forma_pago_id, monto, referencia)
+            SELECT @factura_id, p.forma_pago_id, p.monto, p.referencia
+            FROM @pagos_t p;
+
+            -- Inventario: solo descuenta si todavía alcanzan las existencias
+            UPDATE i
+            SET cantidad_disponible = i.cantidad_disponible - t.pedido
+            FROM dbo.inventariosucursal i
+            INNER JOIN (SELECT libro_id, SUM(cantidad) AS pedido FROM @lineas GROUP BY libro_id) t
+                    ON t.libro_id = i.libro_id
+            WHERE i.sucursal_id = @sucursal_id
+              AND i.cantidad_disponible >= t.pedido;
+            SET @filas = @@ROWCOUNT;
+
+            IF @filas <> (SELECT COUNT(DISTINCT libro_id) FROM @lineas)
+                THROW 50006, N'No hay existencias suficientes en la sucursal.', 1;
+
+            INSERT INTO dbo.movimientoinventario (sucursal_id, ejemplar_id, empleado_id, tipo_movimiento, cantidad, observacion)
+            SELECT @sucursal_id, NULL, @empleado_id, N'SALIDA', t.pedido,
+                   CONCAT(N'Venta factura ', @factura_id, N', libro ', t.libro_id)
+            FROM (SELECT libro_id, SUM(cantidad) AS pedido FROM @lineas GROUP BY libro_id) t;
+        COMMIT TRANSACTION;
+
+        -- 3. Resultado para la API
+        SELECT @factura_id AS factura_id,
+               @subtotal AS subtotal,
+               @descuento_total AS descuento_total,
+               @impuesto_total AS impuesto_total,
+               @total AS total;
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
