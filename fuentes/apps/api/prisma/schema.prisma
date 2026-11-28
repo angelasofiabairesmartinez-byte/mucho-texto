@@ -2,7 +2,7 @@
 // Prisma lee las tablas desde SQL Server (no al revés).
 // La fuente de verdad son los scripts de base-de-datos/DDL.
 //
-// Para traer los modelos de las 53 tablas (con la BD levantada):
+// Para traer los modelos de las 57 tablas (con la BD levantada):
 //   pnpm --filter @muchotexto/api db:pull
 // NUNCA usar "prisma migrate".
 // Los SP y las vistas se llaman con prisma.$queryRaw.

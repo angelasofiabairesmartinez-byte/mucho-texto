@@ -5,8 +5,8 @@
    ============================================================ */
 SET NOCOUNT ON;
 
-IF (SELECT COUNT(*) FROM sys.tables WHERE schema_id = SCHEMA_ID(N'dbo')) < 53
-    THROW 50900, N'PRUEBA FALLIDA: faltan tablas (se esperan 53).', 1;
+IF (SELECT COUNT(*) FROM sys.tables WHERE schema_id = SCHEMA_ID(N'dbo')) < 57
+    THROW 50900, N'PRUEBA FALLIDA: faltan tablas (se esperan 57).', 1;
 
 IF (SELECT COUNT(*) FROM sys.views WHERE schema_id = SCHEMA_ID(N'dbo')) < 16
     THROW 50901, N'PRUEBA FALLIDA: faltan vistas (se esperan 16).', 1;
