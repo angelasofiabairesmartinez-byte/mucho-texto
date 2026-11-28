@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import { InicioCatalogo } from '../pantallas/01-inicio-catalogo/Pantalla';
+import { FichaLibro } from '../pantallas/03-ficha-libro/Pantalla';
 import { PrestamosDevoluciones } from '../pantallas/14-prestamos-devoluciones/Pantalla';
 
 // ============================================================
@@ -23,7 +24,7 @@ const ADMIN = ['Administrador', 'Gerente'];
 export const menu: ItemMenu[] = [
   { numero: '01', etiqueta: 'Inicio y catálogo', ruta: '/', roles: [], bloque: 3, grupo: 'Cliente', componente: InicioCatalogo },
   { numero: '02', etiqueta: 'Inicio de sesión', ruta: '/entrar', roles: [], bloque: 4, grupo: 'Cuenta' },
-  { numero: '03', etiqueta: 'Ficha del libro', ruta: '/libros/:id', roles: [], bloque: 3, grupo: 'Cliente' },
+  { numero: '03', etiqueta: 'Ficha del libro', ruta: '/libros/:id', roles: [], bloque: 3, grupo: 'Cliente', componente: FichaLibro },
   { numero: '04', etiqueta: 'Carrito y pago', ruta: '/carrito', roles: ['Cliente'], bloque: 3, grupo: 'Cliente' },
   { numero: '05', etiqueta: 'Mis préstamos', ruta: '/mis-prestamos', roles: ['Cliente'], bloque: 3, grupo: 'Cliente' },
   { numero: '06', etiqueta: 'Mis reservas', ruta: '/mis-reservas', roles: ['Cliente'], bloque: 3, grupo: 'Cliente' },
