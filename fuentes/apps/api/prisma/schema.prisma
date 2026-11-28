@@ -8,11 +8,778 @@
 // Los SP y las vistas se llaman con prisma.$queryRaw.
 // ============================================================
 
+
+
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
   provider = "sqlserver"
+}
+
+model auditoria {
+  id             Int      @id(map: "PK_auditoria") @default(autoincrement())
+  usuario_id     Int?
+  fecha_hora     DateTime @default(now(), map: "DF_auditoria_fecha_hora")
+  accion         String   @db.NVarChar(50)
+  tabla_afectada String   @db.NVarChar(100)
+  registro_id    String?  @db.NVarChar(100)
+  detalle        String?  @db.NVarChar(500)
+  usuario        usuario? @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_auditoria_usuario")
+
+  @@index([usuario_id], map: "IX_auditoria_usuario_id")
+}
+
+model autor {
+  id             Int          @id(map: "PK_autor") @default(autoincrement())
+  fecha_registro DateTime?    @db.Date
+  persona_id     Int          @unique(map: "UQ_autor_persona_id")
+  persona        persona      @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_autor_persona")
+  libroautor     libroautor[]
+}
+
+model capitulorecurso {
+  id                 Int            @id(map: "PK_capitulorecurso") @default(autoincrement())
+  recurso_digital_id Int
+  numero             Int            @db.SmallInt
+  titulo             String         @db.NVarChar(150)
+  posicion_inicio    Int
+  recursodigital     recursodigital @relation(fields: [recurso_digital_id], references: [id], onUpdate: NoAction, map: "fk_capitulorecurso_recurso")
+
+  @@unique([recurso_digital_id, numero], map: "UQ_capitulorecurso_recurso_digital_id_numero")
+}
+
+model cargo {
+  id          Int        @id(map: "PK_cargo") @default(autoincrement())
+  nombre      String     @unique(map: "UQ_cargo_nombre") @db.NVarChar(50)
+  descripcion String?    @db.NVarChar(150)
+  empleado    empleado[]
+}
+
+model categoria {
+  id             Int              @id(map: "PK_categoria") @default(autoincrement())
+  nombre         String           @unique(map: "UQ_categoria_nombre") @db.NVarChar(80)
+  descripcion    String?          @db.NVarChar(200)
+  descuento      descuento[]
+  librocategoria librocategoria[]
+}
+
+model cliente {
+  id               Int                @id(map: "PK_cliente") @default(autoincrement())
+  fecha_registro   DateTime           @db.Date
+  persona_id       Int                @unique(map: "UQ_cliente_persona_id")
+  tipo_cliente_id  Int
+  persona          persona            @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_cliente_persona")
+  tipocliente      tipocliente        @relation(fields: [tipo_cliente_id], references: [id], onUpdate: NoAction, map: "fk_cliente_tipo")
+  credencial       credencial[]
+  factura          factura[]
+  historialcliente historialcliente[]
+  listadeseo       listadeseo[]
+  notalectura      notalectura[]
+  notificacion     notificacion[]
+  prestamo         prestamo[]
+  progresolectura  progresolectura[]
+  resenalibro      resenalibro[]
+  reserva          reserva[]
+
+  @@index([tipo_cliente_id], map: "IX_cliente_tipo_cliente_id")
+}
+
+model compraproveedor {
+  id             Int             @id(map: "PK_compraproveedor") @default(autoincrement())
+  fecha_compra   DateTime        @db.Date
+  numero_factura String?         @db.NVarChar(40)
+  proveedor_id   Int
+  empleado_id    Int
+  empleado       empleado        @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_compra_empleado")
+  proveedor      proveedor       @relation(fields: [proveedor_id], references: [id], onUpdate: NoAction, map: "fk_compra_proveedor")
+  detallecompra  detallecompra[]
+
+  @@index([empleado_id], map: "IX_compraproveedor_empleado_id")
+  @@index([proveedor_id], map: "IX_compraproveedor_proveedor_id")
+}
+
+model credencial {
+  id                Int       @id(map: "PK_credencial") @default(autoincrement())
+  fecha_registro    DateTime  @db.Date
+  fecha_vencimiento DateTime? @db.Date
+  estado            String    @default("N'ACTIVA'", map: "DF_credencial_estado") @db.NVarChar(20)
+  cliente_id        Int
+  empleado_id       Int?
+  cliente           cliente   @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_credencial_cliente")
+  empleado          empleado? @relation(fields: [empleado_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_credencial_empleado")
+
+  @@index([cliente_id], map: "IX_credencial_cliente_id")
+  @@index([empleado_id], map: "IX_credencial_empleado_id")
+}
+
+model cubiculo {
+  id         Int        @id(map: "PK_cubiculo") @default(autoincrement())
+  codigo     String     @db.NVarChar(20)
+  estante_id Int
+  estante    estante    @relation(fields: [estante_id], references: [id], onUpdate: NoAction, map: "fk_cubiculo_estante")
+  ejemplar   ejemplar[]
+
+  @@unique([codigo, estante_id], map: "UQ_cubiculo_codigo_estante_id")
+  @@index([estante_id], map: "IX_cubiculo_estante_id")
+}
+
+model descuento {
+  id              Int              @id(map: "PK_descuento") @default(autoincrement())
+  nombre          String           @db.NVarChar(80)
+  descripcion     String?          @db.NVarChar(250)
+  tipo_descuento  String           @db.NVarChar(20)
+  valor           Decimal          @db.Decimal(10, 2)
+  fecha_inicio    DateTime         @db.Date
+  fecha_fin       DateTime?        @db.Date
+  estado          Int              @default(1, map: "DF_descuento_estado") @db.SmallInt
+  tipo_cliente_id Int?
+  categoria_id    Int?
+  categoria       categoria?       @relation(fields: [categoria_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_descuento_categoria")
+  tipocliente     tipocliente?     @relation(fields: [tipo_cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_descuento_tipocliente")
+  detallefactura  detallefactura[]
+}
+
+model detallecompra {
+  id                  Int             @id(map: "PK_detallecompra") @default(autoincrement())
+  compra_proveedor_id Int
+  libro_id            Int
+  cantidad            Int
+  costo_unitario      Decimal         @db.Decimal(10, 2)
+  compraproveedor     compraproveedor @relation(fields: [compra_proveedor_id], references: [id], onUpdate: NoAction, map: "fk_detallecompra_compra")
+  libro               libro           @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_detallecompra_libro")
+
+  @@index([compra_proveedor_id], map: "IX_detallecompra_compra_proveedor_id")
+  @@index([libro_id], map: "IX_detallecompra_libro_id")
+}
+
+model detalledevolucion {
+  id                  Int             @id(map: "PK_detalledevolucion") @default(autoincrement())
+  devolucion_id       Int
+  detalle_prestamo_id Int             @unique(map: "UQ_detalledevolucion_detalle_prestamo_id")
+  condicion_entrega   String          @db.NVarChar(40)
+  observacion         String?         @db.NVarChar(200)
+  detalleprestamo     detalleprestamo @relation(fields: [detalle_prestamo_id], references: [id], onUpdate: NoAction, map: "fk_detalledevolucion_detalleprestamo")
+  devolucion          devolucion      @relation(fields: [devolucion_id], references: [id], onUpdate: NoAction, map: "fk_detalledevolucion_devolucion")
+
+  @@index([devolucion_id], map: "IX_detalledevolucion_devolucion_id")
+}
+
+model detallefactura {
+  id              Int        @id(map: "PK_detallefactura") @default(autoincrement())
+  factura_id      Int
+  libro_id        Int
+  cantidad        Int
+  precio_unitario Decimal    @db.Decimal(10, 2)
+  descuento       Decimal    @default(0, map: "DF_detallefactura_descuento") @db.Decimal(10, 2)
+  descuento_id    Int?
+  impuesto_id     Int?
+  monto_impuesto  Decimal    @default(0, map: "DF_detallefactura_monto_impuesto") @db.Decimal(10, 2)
+  descuento_rel   descuento? @relation(fields: [descuento_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_detallefactura_descuento")
+  factura         factura    @relation(fields: [factura_id], references: [id], onUpdate: NoAction, map: "fk_detallefactura_factura")
+  impuesto        impuesto?  @relation(fields: [impuesto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_detallefactura_impuesto")
+  libro           libro      @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_detallefactura_libro")
+
+  @@index([descuento_id], map: "IX_detallefactura_descuento_id")
+  @@index([factura_id], map: "IX_detallefactura_factura_id")
+  @@index([impuesto_id], map: "IX_detallefactura_impuesto_id")
+  @@index([libro_id], map: "IX_detallefactura_libro_id")
+}
+
+model detalleprestamo {
+  id                Int                @id(map: "PK_detalleprestamo") @default(autoincrement())
+  prestamo_id       Int
+  ejemplar_id       Int
+  detalledevolucion detalledevolucion?
+  ejemplar          ejemplar           @relation(fields: [ejemplar_id], references: [id], onUpdate: NoAction, map: "fk_detalleprestamo_ejemplar")
+  prestamo          prestamo           @relation(fields: [prestamo_id], references: [id], onUpdate: NoAction, map: "fk_detalleprestamo_prestamo")
+  multa             multa[]
+
+  @@unique([prestamo_id, ejemplar_id], map: "UQ_detalleprestamo_prestamo_id_ejemplar_id")
+  @@index([ejemplar_id], map: "IX_detalleprestamo_ejemplar_id")
+}
+
+model devolucion {
+  id                Int                 @id(map: "PK_devolucion") @default(autoincrement())
+  fecha_devolucion  DateTime
+  observacion       String?             @db.NVarChar(200)
+  empleado_id       Int
+  detalledevolucion detalledevolucion[]
+  empleado          empleado            @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_devolucion_empleado")
+
+  @@index([empleado_id], map: "IX_devolucion_empleado_id")
+}
+
+model edicion {
+  id               Int          @id(map: "PK_edicion") @default(autoincrement())
+  numero_edicion   String?      @db.NVarChar(30)
+  anio_publicacion Decimal?     @db.Decimal(4, 0)
+  isbn             String?      @unique(map: "UQ_edicion_isbn") @db.NVarChar(20)
+  editorial_id     Int
+  idioma_id        Int
+  formato_libro_id Int
+  editorial        editorial    @relation(fields: [editorial_id], references: [id], onUpdate: NoAction, map: "fk_edicion_editorial")
+  formatolibro     formatolibro @relation(fields: [formato_libro_id], references: [id], onUpdate: NoAction, map: "fk_edicion_formato")
+  idioma           idioma       @relation(fields: [idioma_id], references: [id], onUpdate: NoAction, map: "fk_edicion_idioma")
+  libro            libro[]
+
+  @@index([editorial_id], map: "IX_edicion_editorial_id")
+  @@index([formato_libro_id], map: "IX_edicion_formato_libro_id")
+  @@index([idioma_id], map: "IX_edicion_idioma_id")
+}
+
+model editorial {
+  id      Int       @id(map: "PK_editorial") @default(autoincrement())
+  nombre  String    @unique(map: "UQ_editorial_nombre") @db.NVarChar(100)
+  edicion edicion[]
+}
+
+model ejemplar {
+  id                   Int                    @id(map: "PK_ejemplar") @default(autoincrement())
+  codigo_barras        String                 @unique(map: "UQ_ejemplar_codigo_barras") @db.NVarChar(40)
+  fecha_adquisicion    DateTime?              @db.Date
+  precio_adquisicion   Decimal?               @db.Decimal(10, 2)
+  libro_id             Int
+  cubiculo_id          Int?
+  estado_ejemplar_id   Int
+  detalleprestamo      detalleprestamo[]
+  cubiculo             cubiculo?              @relation(fields: [cubiculo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ejemplar_cubiculo")
+  estadoejemplar       estadoejemplar         @relation(fields: [estado_ejemplar_id], references: [id], onUpdate: NoAction, map: "fk_ejemplar_estado")
+  libro                libro                  @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_ejemplar_libro")
+  incidenciaejemplar   incidenciaejemplar[]
+  movimientoinventario movimientoinventario[]
+  reserva              reserva[]
+
+  @@index([cubiculo_id], map: "IX_ejemplar_cubiculo_id")
+  @@index([estado_ejemplar_id], map: "IX_ejemplar_estado_ejemplar_id")
+  @@index([libro_id], map: "IX_ejemplar_libro_id")
+}
+
+model empleado {
+  id                   Int                    @id(map: "PK_empleado") @default(autoincrement())
+  codigo_empleado      String                 @unique(map: "UQ_empleado_codigo_empleado") @db.NVarChar(20)
+  fecha_contratacion   DateTime               @db.Date
+  persona_id           Int                    @unique(map: "UQ_empleado_persona_id")
+  cargo_id             Int
+  compraproveedor      compraproveedor[]
+  credencial           credencial[]
+  devolucion           devolucion[]
+  cargo                cargo                  @relation(fields: [cargo_id], references: [id], onUpdate: NoAction, map: "fk_empleado_cargo")
+  persona              persona                @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_empleado_persona")
+  factura              factura[]
+  historialcliente     historialcliente[]
+  historialprestamo    historialprestamo[]
+  incidenciaejemplar   incidenciaejemplar[]
+  movimientoinventario movimientoinventario[]
+  prestamo             prestamo[]
+
+  @@index([cargo_id], map: "IX_empleado_cargo_id")
+}
+
+model estadoejemplar {
+  id          Int        @id(map: "PK_estadoejemplar") @default(autoincrement())
+  nombre      String     @unique(map: "UQ_estadoejemplar_nombre") @db.NVarChar(30)
+  descripcion String?    @db.NVarChar(120)
+  ejemplar    ejemplar[]
+}
+
+model estadoprestamo {
+  id          Int        @id(map: "PK_estadoprestamo") @default(autoincrement())
+  nombre      String     @unique(map: "UQ_estadoprestamo_nombre") @db.NVarChar(30)
+  descripcion String?    @db.NVarChar(120)
+  prestamo    prestamo[]
+}
+
+model estante {
+  id          Int        @id(map: "PK_estante") @default(autoincrement())
+  codigo      String     @db.NVarChar(20)
+  sucursal_id Int
+  cubiculo    cubiculo[]
+  sucursal    sucursal   @relation(fields: [sucursal_id], references: [id], onUpdate: NoAction, map: "fk_estante_sucursal")
+
+  @@unique([codigo, sucursal_id], map: "UQ_estante_codigo_sucursal_id")
+  @@index([sucursal_id], map: "IX_estante_sucursal_id")
+}
+
+model factura {
+  id               Int                @id(map: "PK_factura") @default(autoincrement())
+  fecha            DateTime
+  cliente_id       Int?
+  empleado_id      Int
+  canal            String             @default("N'T'", map: "DF_factura_canal") @db.NVarChar(1)
+  detallefactura   detallefactura[]
+  cliente          cliente?           @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_factura_cliente")
+  empleado         empleado           @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_factura_empleado")
+  facturaformapago facturaformapago[]
+
+  @@index([cliente_id], map: "IX_factura_cliente_id")
+  @@index([empleado_id], map: "IX_factura_empleado_id")
+}
+
+model facturaformapago {
+  factura_id    Int
+  forma_pago_id Int
+  monto         Decimal   @db.Decimal(10, 2)
+  referencia    String?   @db.NVarChar(80)
+  factura       factura   @relation(fields: [factura_id], references: [id], onUpdate: NoAction, map: "fk_facturaformapago_factura")
+  formapago     formapago @relation(fields: [forma_pago_id], references: [id], onUpdate: NoAction, map: "fk_facturaformapago_forma")
+
+  @@id([factura_id, forma_pago_id], map: "PK_facturaformapago")
+  @@index([forma_pago_id], map: "IX_facturaformapago_forma_pago_id")
+}
+
+model formapago {
+  id               Int                @id(map: "PK_formapago") @default(autoincrement())
+  nombre           String             @unique(map: "UQ_formapago_nombre") @db.NVarChar(40)
+  facturaformapago facturaformapago[]
+  pagomulta        pagomulta[]
+}
+
+model formatolibro {
+  id      Int       @id(map: "PK_formatolibro") @default(autoincrement())
+  nombre  String    @unique(map: "UQ_formatolibro_nombre") @db.NVarChar(40)
+  edicion edicion[]
+}
+
+model historialcliente {
+  id           Int       @id(map: "PK_historialcliente") @default(autoincrement())
+  cliente_id   Int
+  empleado_id  Int?
+  fecha_cambio DateTime  @default(now(), map: "DF_historialcliente_fecha_cambio")
+  tipo_cambio  String    @db.NVarChar(50)
+  descripcion  String    @db.NVarChar(250)
+  cliente      cliente   @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_historialcliente_cliente")
+  empleado     empleado? @relation(fields: [empleado_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_historialcliente_empleado")
+
+  @@index([cliente_id], map: "IX_historialcliente_cliente_id")
+  @@index([empleado_id], map: "IX_historialcliente_empleado_id")
+}
+
+model historialprestamo {
+  id              Int       @id(map: "PK_historialprestamo") @default(autoincrement())
+  prestamo_id     Int
+  empleado_id     Int?
+  fecha_cambio    DateTime  @default(now(), map: "DF_historialprestamo_fecha_cambio")
+  estado_anterior String?   @db.NVarChar(30)
+  estado_nuevo    String    @db.NVarChar(30)
+  observacion     String?   @db.NVarChar(250)
+  empleado        empleado? @relation(fields: [empleado_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_historialprestamo_empleado")
+  prestamo        prestamo  @relation(fields: [prestamo_id], references: [id], onUpdate: NoAction, map: "fk_historialprestamo_prestamo")
+
+  @@index([empleado_id], map: "IX_historialprestamo_empleado_id")
+  @@index([prestamo_id], map: "IX_historialprestamo_prestamo_id")
+}
+
+model idioma {
+  id      Int       @id(map: "PK_idioma") @default(autoincrement())
+  nombre  String    @unique(map: "UQ_idioma_nombre") @db.NVarChar(50)
+  edicion edicion[]
+}
+
+model impuesto {
+  id             Int              @id(map: "PK_impuesto") @default(autoincrement())
+  nombre         String           @db.NVarChar(80)
+  porcentaje     Decimal          @db.Decimal(5, 2)
+  fecha_inicio   DateTime         @db.Date
+  fecha_fin      DateTime?        @db.Date
+  estado         Int              @default(1, map: "DF_impuesto_estado") @db.SmallInt
+  detallefactura detallefactura[]
+}
+
+model incidenciaejemplar {
+  id               Int       @id(map: "PK_incidenciaejemplar") @default(autoincrement())
+  ejemplar_id      Int
+  empleado_id      Int
+  tipo_incidencia  String    @db.NVarChar(40)
+  fecha_reporte    DateTime  @default(now(), map: "DF_incidenciaejemplar_fecha_reporte")
+  descripcion      String    @db.NVarChar(250)
+  estado           String    @default("N'ABIERTA'", map: "DF_incidenciaejemplar_estado") @db.NVarChar(30)
+  fecha_resolucion DateTime?
+  ejemplar         ejemplar  @relation(fields: [ejemplar_id], references: [id], onUpdate: NoAction, map: "fk_incidencia_ejemplar")
+  empleado         empleado  @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_incidencia_empleado")
+
+  @@index([ejemplar_id], map: "IX_incidenciaejemplar_ejemplar_id")
+  @@index([empleado_id], map: "IX_incidenciaejemplar_empleado_id")
+}
+
+model inventariosucursal {
+  id                  Int      @id(map: "PK_inventariosucursal") @default(autoincrement())
+  sucursal_id         Int
+  libro_id            Int
+  cantidad_disponible Int      @default(0, map: "DF_inventariosucursal_cantidad_disponible")
+  cantidad_danada     Int      @default(0, map: "DF_inventariosucursal_cantidad_danada")
+  cantidad_reservada  Int      @default(0, map: "DF_inventariosucursal_cantidad_reservada")
+  fecha_actualizacion DateTime @default(now(), map: "DF_inventariosucursal_fecha_actualizacion")
+  libro               libro    @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_inventariosucursal_libro")
+  sucursal            sucursal @relation(fields: [sucursal_id], references: [id], onUpdate: NoAction, map: "fk_inventariosucursal_sucursal")
+
+  @@unique([sucursal_id, libro_id], map: "UQ_inventariosucursal_sucursal_id_libro_id")
+  @@index([libro_id], map: "IX_inventariosucursal_libro_id")
+}
+
+model libro {
+  id                 Int                  @id(map: "PK_libro") @default(autoincrement())
+  titulo             String               @db.NVarChar(180)
+  descripcion        String?              @db.NVarChar(Max)
+  edicion_id         Int
+  precio_venta       Decimal?             @db.Decimal(10, 2)
+  permite_digital    Int                  @default(0, map: "DF_libro_permite_digital") @db.SmallInt
+  ruta_portada       String?              @db.NVarChar(300)
+  detallecompra      detallecompra[]
+  detallefactura     detallefactura[]
+  ejemplar           ejemplar[]
+  inventariosucursal inventariosucursal[]
+  edicion            edicion              @relation(fields: [edicion_id], references: [id], onUpdate: NoAction, map: "fk_libro_edicion")
+  libroautor         libroautor[]
+  librocategoria     librocategoria[]
+  listadeseo         listadeseo[]
+  recursodigital     recursodigital[]
+  resenalibro        resenalibro[]
+  reserva            reserva[]
+
+  @@index([edicion_id], map: "IX_libro_edicion_id")
+}
+
+model libroautor {
+  libro_id      Int
+  autor_id      Int
+  orden_autoria Int?  @db.SmallInt
+  autor         autor @relation(fields: [autor_id], references: [id], onUpdate: NoAction, map: "fk_libroautor_autor")
+  libro         libro @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_libroautor_libro")
+
+  @@id([libro_id, autor_id], map: "PK_libroautor")
+  @@index([autor_id], map: "IX_libroautor_autor_id")
+}
+
+model librocategoria {
+  libro_id     Int
+  categoria_id Int
+  categoria    categoria @relation(fields: [categoria_id], references: [id], onUpdate: NoAction, map: "fk_librocat_categoria")
+  libro        libro     @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_librocat_libro")
+
+  @@id([libro_id, categoria_id], map: "PK_librocategoria")
+  @@index([categoria_id], map: "IX_librocategoria_categoria_id")
+}
+
+model listadeseo {
+  id                  Int      @id(map: "PK_listadeseo") @default(autoincrement())
+  cliente_id          Int
+  libro_id            Int
+  fecha_agregado      DateTime @default(now(), map: "DF_listadeseo_fecha_agregado")
+  notificar_descuento Int      @default(1, map: "DF_listadeseo_notificar_descuento") @db.SmallInt
+  cliente             cliente  @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_listadeseo_cliente")
+  libro               libro    @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_listadeseo_libro")
+
+  @@unique([cliente_id, libro_id], map: "UQ_listadeseo_cliente_id_libro_id")
+  @@index([libro_id], map: "IX_listadeseo_libro_id")
+}
+
+model movimientoinventario {
+  id               Int       @id(map: "PK_movimientoinventario") @default(autoincrement())
+  sucursal_id      Int
+  ejemplar_id      Int?
+  empleado_id      Int
+  tipo_movimiento  String    @db.NVarChar(30)
+  fecha_movimiento DateTime  @default(now(), map: "DF_movimientoinventario_fecha_movimiento")
+  cantidad         Int
+  observacion      String?   @db.NVarChar(250)
+  ejemplar         ejemplar? @relation(fields: [ejemplar_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_movinventario_ejemplar")
+  empleado         empleado  @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_movinventario_empleado")
+  sucursal         sucursal  @relation(fields: [sucursal_id], references: [id], onUpdate: NoAction, map: "fk_movinventario_sucursal")
+
+  @@index([ejemplar_id], map: "IX_movimientoinventario_ejemplar_id")
+  @@index([empleado_id], map: "IX_movimientoinventario_empleado_id")
+  @@index([sucursal_id], map: "IX_movimientoinventario_sucursal_id")
+}
+
+model multa {
+  id                  Int             @id(map: "PK_multa") @default(autoincrement())
+  fecha_generacion    DateTime        @db.Date
+  monto               Decimal         @db.Decimal(10, 2)
+  motivo              String          @db.NVarChar(180)
+  estado              String          @default("N'PENDIENTE'", map: "DF_multa_estado") @db.NVarChar(20)
+  detalle_prestamo_id Int
+  detalleprestamo     detalleprestamo @relation(fields: [detalle_prestamo_id], references: [id], onUpdate: NoAction, map: "fk_multa_detalleprestamo")
+  pagomulta           pagomulta[]
+
+  @@index([detalle_prestamo_id], map: "IX_multa_detalle_prestamo_id")
+}
+
+model notalectura {
+  id                 Int            @id(map: "PK_notalectura") @default(autoincrement())
+  cliente_id         Int
+  recurso_digital_id Int
+  tipo               String         @db.NVarChar(1)
+  posicion           Int
+  texto_seleccionado String?        @db.NVarChar(500)
+  nota               String?        @db.NVarChar(500)
+  color              String?        @db.NVarChar(7)
+  fecha_creacion     DateTime       @default(now(), map: "DF_notalectura_fecha_creacion")
+  cliente            cliente        @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_notalectura_cliente")
+  recursodigital     recursodigital @relation(fields: [recurso_digital_id], references: [id], onUpdate: NoAction, map: "fk_notalectura_recurso")
+
+  @@index([cliente_id], map: "IX_notalectura_cliente_id")
+  @@index([recurso_digital_id], map: "IX_notalectura_recurso_digital_id")
+}
+
+model notificacion {
+  id            Int       @id(map: "PK_notificacion") @default(autoincrement())
+  cliente_id    Int
+  tipo          String    @db.NVarChar(1)
+  titulo        String    @db.NVarChar(100)
+  mensaje       String    @db.NVarChar(300)
+  referencia_id Int?
+  fecha_envio   DateTime  @default(now(), map: "DF_notificacion_fecha_envio")
+  leida         Int       @default(0, map: "DF_notificacion_leida") @db.SmallInt
+  fecha_lectura DateTime?
+  cliente       cliente   @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_notificacion_cliente")
+
+  @@index([cliente_id], map: "IX_notificacion_cliente_id")
+}
+
+model pagomulta {
+  id            Int       @id(map: "PK_pagomulta") @default(autoincrement())
+  fecha_pago    DateTime
+  monto         Decimal   @db.Decimal(10, 2)
+  multa_id      Int
+  forma_pago_id Int
+  formapago     formapago @relation(fields: [forma_pago_id], references: [id], onUpdate: NoAction, map: "fk_pagomulta_forma")
+  multa         multa     @relation(fields: [multa_id], references: [id], onUpdate: NoAction, map: "fk_pagomulta_multa")
+
+  @@index([forma_pago_id], map: "IX_pagomulta_forma_pago_id")
+  @@index([multa_id], map: "IX_pagomulta_multa_id")
+}
+
+model persona {
+  id               Int        @id(map: "PK_persona") @default(autoincrement())
+  nombre           String     @db.NVarChar(60)
+  segundo_nombre   String?    @db.NVarChar(60)
+  apellido         String     @db.NVarChar(60)
+  segundo_apellido String?    @db.NVarChar(60)
+  correo           String?    @unique(map: "UQ_persona_correo") @db.NVarChar(120)
+  genero           String?    @db.NChar(1)
+  fecha_nacimiento DateTime?  @db.Date
+  autor            autor?
+  cliente          cliente?
+  empleado         empleado?
+  telefono         telefono[]
+  usuario          usuario?
+}
+
+model prestamo {
+  id                  Int                 @id(map: "PK_prestamo") @default(autoincrement())
+  fecha_prestamo      DateTime            @db.Date
+  fecha_vencimiento   DateTime            @db.Date
+  observacion         String?             @db.NVarChar(200)
+  cliente_id          Int
+  empleado_id         Int
+  estado_prestamo_id  Int
+  numero_renovaciones Int                 @default(0, map: "DF_prestamo_numero_renovaciones") @db.SmallInt
+  detalleprestamo     detalleprestamo[]
+  historialprestamo   historialprestamo[]
+  cliente             cliente             @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_cliente")
+  empleado            empleado            @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_empleado")
+  estadoprestamo      estadoprestamo      @relation(fields: [estado_prestamo_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_estado")
+  reserva             reserva[]
+
+  @@index([cliente_id], map: "IX_prestamo_cliente_id")
+  @@index([empleado_id], map: "IX_prestamo_empleado_id")
+  @@index([estado_prestamo_id], map: "IX_prestamo_estado_prestamo_id")
+}
+
+model progresolectura {
+  id                   Int            @id(map: "PK_progresolectura") @default(autoincrement())
+  cliente_id           Int
+  recurso_digital_id   Int
+  posicion_actual      Int            @default(0, map: "DF_progresolectura_posicion_actual")
+  porcentaje           Decimal        @default(0, map: "DF_progresolectura_porcentaje") @db.Decimal(5, 2)
+  fecha_inicio         DateTime       @default(now(), map: "DF_progresolectura_fecha_inicio")
+  fecha_ultima_lectura DateTime       @default(now(), map: "DF_progresolectura_fecha_ultima_lectura")
+  cliente              cliente        @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_progresolectura_cliente")
+  recursodigital       recursodigital @relation(fields: [recurso_digital_id], references: [id], onUpdate: NoAction, map: "fk_progresolectura_recurso")
+
+  @@unique([cliente_id, recurso_digital_id], map: "UQ_progresolectura_cliente_id_recurso_digital_id")
+  @@index([recurso_digital_id], map: "IX_progresolectura_recurso_digital_id")
+}
+
+model proveedor {
+  id              Int               @id(map: "PK_proveedor") @default(autoincrement())
+  nombre          String            @db.NVarChar(100)
+  telefono        String?           @db.NVarChar(25)
+  correo          String?           @db.NVarChar(120)
+  direccion       String?           @db.NVarChar(180)
+  compraproveedor compraproveedor[]
+}
+
+model recursodigital {
+  id                Int               @id(map: "PK_recursodigital") @default(autoincrement())
+  libro_id          Int
+  tipo              String            @db.NVarChar(1)
+  ruta_archivo      String            @db.NVarChar(300)
+  total_paginas     Int?
+  duracion_segundos Int?
+  generado_ia       Int               @default(0, map: "DF_recursodigital_generado_ia") @db.SmallInt
+  voz_narracion     String?           @db.NVarChar(60)
+  fecha_publicacion DateTime          @default(now(), map: "DF_recursodigital_fecha_publicacion")
+  estado            Int               @default(1, map: "DF_recursodigital_estado") @db.SmallInt
+  capitulorecurso   capitulorecurso[]
+  notalectura       notalectura[]
+  progresolectura   progresolectura[]
+  libro             libro             @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_recursodigital_libro")
+
+  @@unique([libro_id, tipo], map: "UQ_recursodigital_libro_id_tipo")
+}
+
+model resenalibro {
+  id           Int      @id(map: "PK_resenalibro") @default(autoincrement())
+  cliente_id   Int
+  libro_id     Int
+  calificacion Int      @db.SmallInt
+  comentario   String?  @db.NVarChar(500)
+  fecha_resena DateTime @default(now(), map: "DF_resenalibro_fecha_resena")
+  estado       Int      @default(1, map: "DF_resenalibro_estado") @db.SmallInt
+  cliente      cliente  @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_resenalibro_cliente")
+  libro        libro    @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_resenalibro_libro")
+
+  @@unique([cliente_id, libro_id], map: "UQ_resenalibro_cliente_id_libro_id")
+  @@index([libro_id], map: "IX_resenalibro_libro_id")
+}
+
+model reserva {
+  id                Int       @id(map: "PK_reserva") @default(autoincrement())
+  cliente_id        Int
+  libro_id          Int
+  fecha_reserva     DateTime  @default(now(), map: "DF_reserva_fecha_reserva")
+  fecha_vencimiento DateTime?
+  estado            String    @default("N'PENDIENTE'", map: "DF_reserva_estado") @db.NVarChar(30)
+  fecha_atencion    DateTime?
+  tipo              String    @default("N'R'", map: "DF_reserva_tipo") @db.NVarChar(1)
+  sucursal_id       Int?
+  ejemplar_id       Int?
+  prestamo_id       Int?
+  cliente           cliente   @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_reserva_cliente")
+  ejemplar          ejemplar? @relation(fields: [ejemplar_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_ejemplar")
+  libro             libro     @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_reserva_libro")
+  prestamo          prestamo? @relation(fields: [prestamo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_prestamo")
+  sucursal          sucursal? @relation(fields: [sucursal_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_sucursal")
+
+  @@index([cliente_id], map: "IX_reserva_cliente_id")
+  @@index([libro_id], map: "IX_reserva_libro_id")
+  @@index([ejemplar_id], map: "IX_reserva_ejemplar_id")
+}
+
+model rol {
+  id          Int       @id(map: "PK_rol") @default(autoincrement())
+  nombre      String    @unique(map: "UQ_rol_nombre") @db.NVarChar(50)
+  descripcion String?   @db.NVarChar(200)
+  usuario     usuario[]
+}
+
+model sucursal {
+  id                   Int                    @id(map: "PK_sucursal") @default(autoincrement())
+  nombre               String                 @db.NVarChar(80)
+  direccion            String                 @db.NVarChar(180)
+  telefono             String?                @db.NVarChar(25)
+  estante              estante[]
+  inventariosucursal   inventariosucursal[]
+  movimientoinventario movimientoinventario[]
+  reserva              reserva[]
+}
+
+model telefono {
+  id         Int     @id(map: "PK_telefono") @default(autoincrement())
+  numero     String  @db.NVarChar(25)
+  persona_id Int
+  tipo       String  @db.NVarChar(1)
+  persona    persona @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_telefono_persona")
+
+  @@index([persona_id], map: "IX_telefono_persona_id")
+}
+
+model tipocliente {
+  id                  Int         @id(map: "PK_tipocliente") @default(autoincrement())
+  nombre              String      @unique(map: "UQ_tipocliente_nombre") @db.NVarChar(40)
+  descripcion         String?     @db.NVarChar(150)
+  limite_prestamos    Int         @default(3, map: "DF_tipocliente_limite_prestamos") @db.SmallInt
+  limite_renovaciones Int         @default(1, map: "DF_tipocliente_limite_renovaciones") @db.SmallInt
+  cliente             cliente[]
+  descuento           descuento[]
+}
+
+model usuario {
+  id              Int         @id(map: "PK_usuario") @default(autoincrement())
+  nombre_usuario  String      @unique(map: "UQ_usuario_nombre_usuario") @db.NVarChar(50)
+  contrasena_hash String      @db.NVarChar(255)
+  persona_id      Int         @unique(map: "UQ_usuario_persona_id")
+  rol_id          Int
+  fecha_creacion  DateTime    @default(now(), map: "DF_usuario_fecha_creacion")
+  estado          Int         @default(1, map: "DF_usuario_estado") @db.SmallInt
+  auditoria       auditoria[]
+  auth_user       auth_user?
+  persona         persona     @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_usuario_persona")
+  rol             rol         @relation(fields: [rol_id], references: [id], onUpdate: NoAction, map: "fk_usuario_rol")
+
+  @@index([rol_id], map: "IX_usuario_rol_id")
+}
+
+model auth_account {
+  id                    String    @id(map: "PK_auth_account") @db.NVarChar(36)
+  accountId             String    @db.NVarChar(255)
+  providerId            String    @db.NVarChar(100)
+  userId                String    @db.NVarChar(36)
+  accessToken           String?   @db.NVarChar(Max)
+  refreshToken          String?   @db.NVarChar(Max)
+  idToken               String?   @db.NVarChar(Max)
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?   @db.NVarChar(500)
+  password              String?   @db.NVarChar(255)
+  createdAt             DateTime  @default(now(), map: "DF_auth_account_createdAt")
+  updatedAt             DateTime  @default(now(), map: "DF_auth_account_updatedAt")
+  auth_user             auth_user @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_auth_account_user")
+
+  @@unique([providerId, accountId], map: "UQ_auth_account_providerId_accountId")
+  @@index([userId], map: "IX_auth_account_userId")
+}
+
+model auth_session {
+  id        String    @id(map: "PK_auth_session") @db.NVarChar(36)
+  expiresAt DateTime
+  token     String    @unique(map: "UQ_auth_session_token") @db.NVarChar(255)
+  createdAt DateTime  @default(now(), map: "DF_auth_session_createdAt")
+  updatedAt DateTime  @default(now(), map: "DF_auth_session_updatedAt")
+  ipAddress String?   @db.NVarChar(100)
+  userAgent String?   @db.NVarChar(500)
+  userId    String    @db.NVarChar(36)
+  auth_user auth_user @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_auth_session_user")
+
+  @@index([userId], map: "IX_auth_session_userId")
+}
+
+model auth_user {
+  id            String         @id(map: "PK_auth_user") @db.NVarChar(36)
+  name          String         @db.NVarChar(120)
+  email         String         @unique(map: "UQ_auth_user_email") @db.NVarChar(120)
+  emailVerified Boolean        @default(false, map: "DF_auth_user_emailVerified")
+  image         String?        @db.NVarChar(500)
+  createdAt     DateTime       @default(now(), map: "DF_auth_user_createdAt")
+  updatedAt     DateTime       @default(now(), map: "DF_auth_user_updatedAt")
+  usuarioId     Int?           @unique(map: "UX_auth_user_usuarioId", where: raw("([usuarioId] IS NOT NULL)"))
+  auth_account  auth_account[]
+  auth_session  auth_session[]
+  usuario       usuario?       @relation(fields: [usuarioId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_auth_user_usuario")
+}
+
+model auth_verification {
+  id         String   @id(map: "PK_auth_verification") @db.NVarChar(36)
+  identifier String   @db.NVarChar(255)
+  value      String   @db.NVarChar(Max)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now(), map: "DF_auth_verification_createdAt")
+  updatedAt  DateTime @default(now(), map: "DF_auth_verification_updatedAt")
+
+  @@index([identifier], map: "IX_auth_verification_identifier")
 }
