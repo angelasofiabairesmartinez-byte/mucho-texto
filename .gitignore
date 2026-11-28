@@ -12,3 +12,4 @@ Thumbs.db
 !.vscode/extensions.json
 fuentes/apps/api/src/generated/
 *.pdf
+*.tsbuildinfo
