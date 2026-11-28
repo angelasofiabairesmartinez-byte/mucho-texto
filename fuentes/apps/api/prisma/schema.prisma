@@ -8,9 +8,12 @@
 // Los SP y las vistas se llaman con prisma.$queryRaw.
 // ============================================================
 
+
+
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -60,6 +63,7 @@ model categoria {
   id             Int              @id(map: "PK_categoria") @default(autoincrement())
   nombre         String           @unique(map: "UQ_categoria_nombre") @db.NVarChar(80)
   descripcion    String?          @db.NVarChar(200)
+  descuento      descuento[]
   librocategoria librocategoria[]
 }
 
@@ -124,15 +128,19 @@ model cubiculo {
 }
 
 model descuento {
-  id             Int              @id(map: "PK_descuento") @default(autoincrement())
-  nombre         String           @db.NVarChar(80)
-  descripcion    String?          @db.NVarChar(250)
-  tipo_descuento String           @db.NVarChar(20)
-  valor          Decimal          @db.Decimal(10, 2)
-  fecha_inicio   DateTime         @db.Date
-  fecha_fin      DateTime?        @db.Date
-  estado         Int              @default(1, map: "DF_descuento_estado") @db.SmallInt
-  detallefactura detallefactura[]
+  id              Int              @id(map: "PK_descuento") @default(autoincrement())
+  nombre          String           @db.NVarChar(80)
+  descripcion     String?          @db.NVarChar(250)
+  tipo_descuento  String           @db.NVarChar(20)
+  valor           Decimal          @db.Decimal(10, 2)
+  fecha_inicio    DateTime         @db.Date
+  fecha_fin       DateTime?        @db.Date
+  estado          Int              @default(1, map: "DF_descuento_estado") @db.SmallInt
+  tipo_cliente_id Int?
+  categoria_id    Int?
+  categoria       categoria?       @relation(fields: [categoria_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_descuento_categoria")
+  tipocliente     tipocliente?     @relation(fields: [tipo_cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_descuento_tipocliente")
+  detallefactura  detallefactura[]
 }
 
 model detallecompra {
@@ -243,6 +251,7 @@ model ejemplar {
   libro                libro                  @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_ejemplar_libro")
   incidenciaejemplar   incidenciaejemplar[]
   movimientoinventario movimientoinventario[]
+  reserva              reserva[]
 
   @@index([cubiculo_id], map: "IX_ejemplar_cubiculo_id")
   @@index([estado_ejemplar_id], map: "IX_ejemplar_estado_ejemplar_id")
@@ -574,6 +583,7 @@ model prestamo {
   cliente             cliente             @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_cliente")
   empleado            empleado            @relation(fields: [empleado_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_empleado")
   estadoprestamo      estadoprestamo      @relation(fields: [estado_prestamo_id], references: [id], onUpdate: NoAction, map: "fk_prestamo_estado")
+  reserva             reserva[]
 
   @@index([cliente_id], map: "IX_prestamo_cliente_id")
   @@index([empleado_id], map: "IX_prestamo_empleado_id")
@@ -646,11 +656,19 @@ model reserva {
   fecha_vencimiento DateTime?
   estado            String    @default("N'PENDIENTE'", map: "DF_reserva_estado") @db.NVarChar(30)
   fecha_atencion    DateTime?
+  tipo              String    @default("N'R'", map: "DF_reserva_tipo") @db.NVarChar(1)
+  sucursal_id       Int?
+  ejemplar_id       Int?
+  prestamo_id       Int?
   cliente           cliente   @relation(fields: [cliente_id], references: [id], onUpdate: NoAction, map: "fk_reserva_cliente")
+  ejemplar          ejemplar? @relation(fields: [ejemplar_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_ejemplar")
   libro             libro     @relation(fields: [libro_id], references: [id], onUpdate: NoAction, map: "fk_reserva_libro")
+  prestamo          prestamo? @relation(fields: [prestamo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_prestamo")
+  sucursal          sucursal? @relation(fields: [sucursal_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reserva_sucursal")
 
   @@index([cliente_id], map: "IX_reserva_cliente_id")
   @@index([libro_id], map: "IX_reserva_libro_id")
+  @@index([ejemplar_id], map: "IX_reserva_ejemplar_id")
 }
 
 model rol {
@@ -668,6 +686,7 @@ model sucursal {
   estante              estante[]
   inventariosucursal   inventariosucursal[]
   movimientoinventario movimientoinventario[]
+  reserva              reserva[]
 }
 
 model telefono {
@@ -681,12 +700,13 @@ model telefono {
 }
 
 model tipocliente {
-  id                  Int       @id(map: "PK_tipocliente") @default(autoincrement())
-  nombre              String    @unique(map: "UQ_tipocliente_nombre") @db.NVarChar(40)
-  descripcion         String?   @db.NVarChar(150)
-  limite_prestamos    Int       @default(3, map: "DF_tipocliente_limite_prestamos") @db.SmallInt
-  limite_renovaciones Int       @default(1, map: "DF_tipocliente_limite_renovaciones") @db.SmallInt
+  id                  Int         @id(map: "PK_tipocliente") @default(autoincrement())
+  nombre              String      @unique(map: "UQ_tipocliente_nombre") @db.NVarChar(40)
+  descripcion         String?     @db.NVarChar(150)
+  limite_prestamos    Int         @default(3, map: "DF_tipocliente_limite_prestamos") @db.SmallInt
+  limite_renovaciones Int         @default(1, map: "DF_tipocliente_limite_renovaciones") @db.SmallInt
   cliente             cliente[]
+  descuento           descuento[]
 }
 
 model usuario {
@@ -698,7 +718,7 @@ model usuario {
   fecha_creacion  DateTime    @default(now(), map: "DF_usuario_fecha_creacion")
   estado          Int         @default(1, map: "DF_usuario_estado") @db.SmallInt
   auditoria       auditoria[]
-  auth_user       auth_user[]
+  auth_user       auth_user?
   persona         persona     @relation(fields: [persona_id], references: [id], onUpdate: NoAction, map: "fk_usuario_persona")
   rol             rol         @relation(fields: [rol_id], references: [id], onUpdate: NoAction, map: "fk_usuario_rol")
 
@@ -720,6 +740,9 @@ model auth_account {
   createdAt             DateTime  @default(now(), map: "DF_auth_account_createdAt")
   updatedAt             DateTime  @default(now(), map: "DF_auth_account_updatedAt")
   auth_user             auth_user @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_auth_account_user")
+
+  @@unique([providerId, accountId], map: "UQ_auth_account_providerId_accountId")
+  @@index([userId], map: "IX_auth_account_userId")
 }
 
 model auth_session {
@@ -732,6 +755,8 @@ model auth_session {
   userAgent String?   @db.NVarChar(500)
   userId    String    @db.NVarChar(36)
   auth_user auth_user @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_auth_session_user")
+
+  @@index([userId], map: "IX_auth_session_userId")
 }
 
 model auth_user {
@@ -742,7 +767,7 @@ model auth_user {
   image         String?        @db.NVarChar(500)
   createdAt     DateTime       @default(now(), map: "DF_auth_user_createdAt")
   updatedAt     DateTime       @default(now(), map: "DF_auth_user_updatedAt")
-  usuarioId     Int?
+  usuarioId     Int?           @unique(map: "UX_auth_user_usuarioId", where: raw("([usuarioId] IS NOT NULL)"))
   auth_account  auth_account[]
   auth_session  auth_session[]
   usuario       usuario?       @relation(fields: [usuarioId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_auth_user_usuario")
@@ -751,8 +776,10 @@ model auth_user {
 model auth_verification {
   id         String   @id(map: "PK_auth_verification") @db.NVarChar(36)
   identifier String   @db.NVarChar(255)
-  value      String   @db.NVarChar(500)
+  value      String   @db.NVarChar(Max)
   expiresAt  DateTime
   createdAt  DateTime @default(now(), map: "DF_auth_verification_createdAt")
   updatedAt  DateTime @default(now(), map: "DF_auth_verification_updatedAt")
+
+  @@index([identifier], map: "IX_auth_verification_identifier")
 }
