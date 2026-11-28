@@ -393,10 +393,14 @@ CREATE TABLE dbo.descuento (
     fecha_inicio DATE NOT NULL,
     fecha_fin DATE NULL,
     estado SMALLINT NOT NULL CONSTRAINT DF_descuento_estado DEFAULT 1,
+    tipo_cliente_id INT NULL,
+    categoria_id INT NULL,
     CONSTRAINT PK_descuento PRIMARY KEY (id),
     CONSTRAINT CK_descuento_estado CHECK (estado IN (0, 1)),
     CONSTRAINT CK_descuento_valor CHECK (valor >= 0),
-    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO'))
+    CONSTRAINT CK_descuento_tipo_descuento CHECK (tipo_descuento IN (N'PORCENTAJE', N'MONTO_FIJO')),
+    CONSTRAINT fk_descuento_tipocliente FOREIGN KEY (tipo_cliente_id) REFERENCES dbo.tipocliente (id),
+    CONSTRAINT fk_descuento_categoria FOREIGN KEY (categoria_id) REFERENCES dbo.categoria (id)
 );
 
 GO
@@ -410,6 +414,8 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Valor del 
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha desde la que comienza la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_inicio';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha hasta la que se mantiene la vigencia.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'fecha_fin';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Activo; 0: Inactivo', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'estado';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Tipo de cliente al que se limita el descuento. NULL: aplica a cualquier tipo de cliente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'tipo_cliente_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Categoría de libros a la que se limita el descuento. NULL: aplica a cualquier libro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'descuento', @level2type = N'COLUMN', @level2name = N'categoria_id';
 GO
 
 -- >>> DDL/018_editorial.sql
@@ -1109,17 +1115,26 @@ CREATE TABLE dbo.reserva (
     fecha_vencimiento DATETIME2(0) NULL,
     estado NVARCHAR(30) NOT NULL CONSTRAINT DF_reserva_estado DEFAULT N'PENDIENTE',
     fecha_atencion DATETIME2(0) NULL,
+    tipo NVARCHAR(1) NOT NULL CONSTRAINT DF_reserva_tipo DEFAULT N'R',
+    sucursal_id INT NULL,
+    ejemplar_id INT NULL,
+    prestamo_id INT NULL,
     CONSTRAINT PK_reserva PRIMARY KEY (id),
     CONSTRAINT CK_reserva_estado CHECK (estado IN (N'PENDIENTE', N'ATENDIDA', N'VENCIDA', N'CANCELADA')),
+    CONSTRAINT CK_reserva_tipo CHECK (tipo IN (N'R', N'S')),
     CONSTRAINT fk_reserva_cliente FOREIGN KEY (cliente_id) REFERENCES dbo.cliente (id),
-    CONSTRAINT fk_reserva_libro FOREIGN KEY (libro_id) REFERENCES dbo.libro (id)
+    CONSTRAINT fk_reserva_libro FOREIGN KEY (libro_id) REFERENCES dbo.libro (id),
+    CONSTRAINT fk_reserva_sucursal FOREIGN KEY (sucursal_id) REFERENCES dbo.sucursal (id),
+    CONSTRAINT fk_reserva_ejemplar FOREIGN KEY (ejemplar_id) REFERENCES dbo.ejemplar (id),
+    CONSTRAINT fk_reserva_prestamo FOREIGN KEY (prestamo_id) REFERENCES dbo.prestamo (id)
 );
 
 GO
 
 CREATE INDEX IX_reserva_cliente_id ON dbo.reserva (cliente_id);
 CREATE INDEX IX_reserva_libro_id ON dbo.reserva (libro_id);
-EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Registra las reservas de libros solicitadas por los clientes.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva';
+CREATE INDEX IX_reserva_ejemplar_id ON dbo.reserva (ejemplar_id);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Registra las reservas de libros y las solicitudes de préstamo hechas por los clientes.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador único del registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'id';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador del cliente relacionado con el registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'cliente_id';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador del libro relacionado con el registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'libro_id';
@@ -1127,6 +1142,10 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y ho
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha límite o de vencimiento del registro.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'fecha_vencimiento';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Estado de la reserva: PENDIENTE, ATENDIDA, VENCIDA o CANCELADA.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'estado';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que se atendió la reserva.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'fecha_atencion';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'R: Reserva; S: Solicitud de préstamo', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'tipo';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Sucursal donde el cliente retirará el libro (solicitudes de préstamo).', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'sucursal_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Ejemplar apartado para el cliente mientras la solicitud está pendiente.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'ejemplar_id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Préstamo generado cuando la reserva o solicitud fue atendida.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'reserva', @level2type = N'COLUMN', @level2name = N'prestamo_id';
 GO
 
 -- >>> DDL/047_telefono.sql
@@ -1325,6 +1344,126 @@ EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identifica
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que se envió la notificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'fecha_envio';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Leída; 0: No leída', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'leida';
 EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que el cliente abrió la notificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'notificacion', @level2type = N'COLUMN', @level2name = N'fecha_lectura';
+GO
+
+-- >>> DDL/054_auth_user.sql
+CREATE TABLE dbo.auth_user (
+    id NVARCHAR(36) NOT NULL,
+    name NVARCHAR(120) NOT NULL,
+    email NVARCHAR(120) NOT NULL,
+    emailVerified BIT NOT NULL CONSTRAINT DF_auth_user_emailVerified DEFAULT 0,
+    image NVARCHAR(500) NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_user_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_user_updatedAt DEFAULT GETDATE(),
+    usuarioId INT NULL,
+    CONSTRAINT PK_auth_user PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_user_email UNIQUE (email),
+    CONSTRAINT fk_auth_user_usuario FOREIGN KEY (usuarioId) REFERENCES dbo.usuario (id)
+);
+
+GO
+
+CREATE UNIQUE INDEX UX_auth_user_usuarioId ON dbo.auth_user (usuarioId) WHERE usuarioId IS NOT NULL;
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuentas de inicio de sesión de Better Auth. Cada una puede enlazarse con un usuario del sistema.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Nombre que muestra la cuenta.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'name';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Correo con el que se inicia sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'email';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'1: Correo verificado; 0: Sin verificar', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'emailVerified';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Dirección de la foto de perfil.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'image';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'updatedAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Usuario del sistema enlazado; de él se toman el rol y la persona.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_user', @level2type = N'COLUMN', @level2name = N'usuarioId';
+GO
+
+-- >>> DDL/055_auth_session.sql
+CREATE TABLE dbo.auth_session (
+    id NVARCHAR(36) NOT NULL,
+    expiresAt DATETIME2(0) NOT NULL,
+    token NVARCHAR(255) NOT NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_session_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_session_updatedAt DEFAULT GETDATE(),
+    ipAddress NVARCHAR(100) NULL,
+    userAgent NVARCHAR(500) NULL,
+    userId NVARCHAR(36) NOT NULL,
+    CONSTRAINT PK_auth_session PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_session_token UNIQUE (token),
+    CONSTRAINT fk_auth_session_user FOREIGN KEY (userId) REFERENCES dbo.auth_user (id) ON DELETE CASCADE
+);
+
+GO
+
+CREATE INDEX IX_auth_session_userId ON dbo.auth_session (userId);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Sesiones abiertas de Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence la sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'expiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de la sesión que guarda la cookie.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'token';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'updatedAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Dirección IP desde la que se inició sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'ipAddress';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Navegador o dispositivo desde el que se inició sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'userAgent';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuenta dueña de la sesión.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_session', @level2type = N'COLUMN', @level2name = N'userId';
+GO
+
+-- >>> DDL/056_auth_account.sql
+CREATE TABLE dbo.auth_account (
+    id NVARCHAR(36) NOT NULL,
+    accountId NVARCHAR(255) NOT NULL,
+    providerId NVARCHAR(100) NOT NULL,
+    userId NVARCHAR(36) NOT NULL,
+    accessToken NVARCHAR(MAX) NULL,
+    refreshToken NVARCHAR(MAX) NULL,
+    idToken NVARCHAR(MAX) NULL,
+    accessTokenExpiresAt DATETIME2(0) NULL,
+    refreshTokenExpiresAt DATETIME2(0) NULL,
+    scope NVARCHAR(500) NULL,
+    password NVARCHAR(255) NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_account_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_account_updatedAt DEFAULT GETDATE(),
+    CONSTRAINT PK_auth_account PRIMARY KEY (id),
+    CONSTRAINT UQ_auth_account_providerId_accountId UNIQUE (providerId, accountId),
+    CONSTRAINT fk_auth_account_user FOREIGN KEY (userId) REFERENCES dbo.auth_user (id) ON DELETE CASCADE
+);
+
+GO
+
+CREATE INDEX IX_auth_account_userId ON dbo.auth_account (userId);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Formas de acceso de cada cuenta de Better Auth: correo y contraseña o Google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador de la cuenta en el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accountId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Proveedor de acceso: credential (correo y contraseña) o google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'providerId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Cuenta de Better Auth a la que pertenece.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'userId';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de acceso entregado por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accessToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token para renovar el acceso.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'refreshToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Token de identidad entregado por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'idToken';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el token de acceso.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'accessTokenExpiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el token de renovación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'refreshTokenExpiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Permisos concedidos por el proveedor.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'scope';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Contraseña cifrada cuando el acceso es por correo.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'password';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_account', @level2type = N'COLUMN', @level2name = N'updatedAt';
+GO
+
+-- >>> DDL/057_auth_verification.sql
+CREATE TABLE dbo.auth_verification (
+    id NVARCHAR(36) NOT NULL,
+    identifier NVARCHAR(255) NOT NULL,
+    value NVARCHAR(MAX) NOT NULL,
+    expiresAt DATETIME2(0) NOT NULL,
+    createdAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_verification_createdAt DEFAULT GETDATE(),
+    updatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_auth_verification_updatedAt DEFAULT GETDATE(),
+    CONSTRAINT PK_auth_verification PRIMARY KEY (id)
+);
+
+GO
+
+CREATE INDEX IX_auth_verification_identifier ON dbo.auth_verification (identifier);
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Códigos temporales de Better Auth: verificación de correo y estado del inicio con Google.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Identificador generado por Better Auth.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'id';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'A quién o a qué proceso pertenece el código.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'identifier';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Valor del código o del estado temporal.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'value';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora en que vence el código.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'expiresAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de creación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'createdAt';
+EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'Fecha y hora de la última modificación.', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'auth_verification', @level2type = N'COLUMN', @level2name = N'updatedAt';
 GO
 
 -- >>> Vistas/01_vw_clientes_prestamos_vigentes.sql
@@ -2786,22 +2925,22 @@ GO
 -- >>> DML/017_descuento.sql
 -- descuento
 SET IDENTITY_INSERT dbo.descuento ON;
-INSERT INTO dbo.descuento (id, nombre, descripcion, tipo_descuento, valor, fecha_inicio, fecha_fin, estado) VALUES
-  (1, N'Descuento estudiante', N'Para estudiantes con carné vigente.', N'PORCENTAJE', 10.00, '2025-01-10', NULL, 1),
-  (2, N'Cliente frecuente', N'Beneficio por compras recurrentes.', N'PORCENTAJE', 5.00, '2025-01-10', NULL, 1),
-  (3, N'Promoción de temporada', N'Descuento por temporada alta.', N'PORCENTAJE', 15.00, '2025-06-01', NULL, 1),
-  (4, N'Adulto mayor', N'Para clientes de 60 años o más.', N'PORCENTAJE', 20.00, '2025-01-10', NULL, 1),
-  (5, N'Día del libro', N'Celebración del Día del Libro.', N'PORCENTAJE', 25.00, '2025-04-01', NULL, 1),
-  (6, N'Liquidación de inventario', N'Salida de títulos con poca rotación.', N'PORCENTAJE', 30.00, '2025-08-01', NULL, 1),
-  (7, N'Cupón de bienvenida', N'Monto fijo para nuevos clientes.', N'MONTO_FIJO', 50.00, '2025-03-01', NULL, 1),
-  (8, N'Bono lector', N'Monto fijo por lectura del mes.', N'MONTO_FIJO', 25.00, '2025-03-01', NULL, 1),
-  (9, N'Descuento a empleados', N'Beneficio interno del personal.', N'PORCENTAJE', 15.00, '2025-01-10', NULL, 1),
-  (10, N'Compra mayorista', N'Para compras de gran volumen.', N'PORCENTAJE', 12.00, '2025-02-01', NULL, 1),
-  (11, N'Aniversario de la librería', N'Promoción por aniversario.', N'PORCENTAJE', 18.00, '2025-05-05', '2025-05-31', 0),
-  (12, N'Black Friday 2025', N'Promoción de fin de noviembre.', N'PORCENTAJE', 35.00, '2025-11-28', '2025-11-30', 0),
-  (13, N'Fin de año', N'Descuento de temporada navideña.', N'PORCENTAJE', 20.00, '2025-12-01', NULL, 1),
-  (14, N'Regreso a clases', N'Campaña escolar de inicio de año.', N'PORCENTAJE', 10.00, '2025-12-15', NULL, 1),
-  (15, N'Membresía premium', N'Beneficio exclusivo de socios.', N'PORCENTAJE', 8.00, '2025-01-10', NULL, 1);
+INSERT INTO dbo.descuento (id, nombre, descripcion, tipo_descuento, valor, fecha_inicio, fecha_fin, estado, tipo_cliente_id, categoria_id) VALUES
+  (1, N'Descuento estudiante', N'Para estudiantes con carné vigente.', N'PORCENTAJE', 10.00, '2025-01-10', NULL, 1, 1, NULL),
+  (2, N'Cliente frecuente', N'Beneficio por compras recurrentes.', N'PORCENTAJE', 5.00, '2025-01-10', NULL, 1, NULL, NULL),
+  (3, N'Promoción de temporada', N'Descuento por temporada alta.', N'PORCENTAJE', 15.00, '2025-06-01', NULL, 1, NULL, 1),
+  (4, N'Adulto mayor', N'Para clientes de 60 años o más.', N'PORCENTAJE', 20.00, '2025-01-10', NULL, 1, 4, NULL),
+  (5, N'Día del libro', N'Celebración del Día del Libro.', N'PORCENTAJE', 25.00, '2025-04-01', NULL, 1, NULL, NULL),
+  (6, N'Liquidación de inventario', N'Salida de títulos con poca rotación.', N'PORCENTAJE', 30.00, '2025-08-01', NULL, 1, NULL, 4),
+  (7, N'Cupón de bienvenida', N'Monto fijo para nuevos clientes.', N'MONTO_FIJO', 50.00, '2025-03-01', NULL, 1, NULL, NULL),
+  (8, N'Bono lector', N'Monto fijo por lectura del mes.', N'MONTO_FIJO', 25.00, '2025-03-01', NULL, 1, NULL, NULL),
+  (9, N'Descuento a empleados', N'Beneficio interno del personal.', N'PORCENTAJE', 15.00, '2025-01-10', NULL, 1, NULL, NULL),
+  (10, N'Compra mayorista', N'Para compras de gran volumen.', N'PORCENTAJE', 12.00, '2025-02-01', NULL, 1, 8, NULL),
+  (11, N'Aniversario de la librería', N'Promoción por aniversario.', N'PORCENTAJE', 18.00, '2025-05-05', '2025-05-31', 0, NULL, NULL),
+  (12, N'Black Friday 2025', N'Promoción de fin de noviembre.', N'PORCENTAJE', 35.00, '2025-11-28', '2025-11-30', 0, NULL, NULL),
+  (13, N'Fin de año', N'Descuento de temporada navideña.', N'PORCENTAJE', 20.00, '2025-12-01', NULL, 1, NULL, NULL),
+  (14, N'Regreso a clases', N'Campaña escolar de inicio de año.', N'PORCENTAJE', 10.00, '2025-12-15', NULL, 1, NULL, 12),
+  (15, N'Membresía premium', N'Beneficio exclusivo de socios.', N'PORCENTAJE', 8.00, '2025-01-10', NULL, 1, NULL, NULL);
 SET IDENTITY_INSERT dbo.descuento OFF;
 GO
 
